@@ -1,4 +1,4 @@
-use crate::cube::{Colour, TurnType};
+use crate::{cube::Colour, turn::TurnType};
 
 /// Used for mapping the internal `u8` representation of tiles to their respective colours
 const FACE_COLOURS: [Colour; 6] = [

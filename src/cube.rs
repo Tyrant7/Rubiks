@@ -1,12 +1,10 @@
-use crate::face::Face;
+use crate::{
+    face::Face,
+    turn::{Turn, TurnType},
+};
 
 pub struct Cube {
     faces: [Face; 6],
-}
-
-pub struct Turn {
-    face_index: usize,
-    turn_type: TurnType,
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -27,12 +25,6 @@ pub enum FaceType {
     Back,
     Left,
     Right,
-}
-
-pub enum TurnType {
-    Clockwise,
-    CounterClockwise,
-    Half,
 }
 
 impl Cube {
@@ -57,12 +49,6 @@ impl Cube {
     }
 
     fn cycle_edges(&mut self, face_type: FaceType, turn_type: TurnType) {
-        unimplemented!()
-    }
-}
-
-impl Turn {
-    pub fn new(face_index: usize, turn_type: TurnType) -> Self {
         unimplemented!()
     }
 }
