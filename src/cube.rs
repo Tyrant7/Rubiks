@@ -1,21 +1,16 @@
-const CUBE_SIZE: usize = 3;
-const FACE_COLOURS: [Colour; 6] = [White, Red, Green, Blue, Orange, Yellow];
+use crate::face::Face;
 
-struct Cube {
+pub struct Cube {
     faces: [Face; 6],
 }
 
-struct Face {
-    tiles: [[u8; CUBE_SIZE]; CUBE_SIZE],
-}
-
-struct Turn {
+pub struct Turn {
     face_index: usize,
     turn_type: TurnType,
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
-enum Colour {
+pub enum Colour {
     White,
     Red,
     Green,
@@ -25,7 +20,7 @@ enum Colour {
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
-enum FaceType {
+pub enum FaceType {
     Top,
     Bottom,
     Front,
@@ -34,7 +29,7 @@ enum FaceType {
     Right,
 }
 
-enum TurnType {
+pub enum TurnType {
     Clockwise,
     CounterClockwise,
     Half,
@@ -60,26 +55,8 @@ impl Cube {
     pub fn is_solved(&self) -> bool {
         unimplemented!()
     }
-}
 
-impl Face {
-    pub fn new(face_type: Colour) -> Self {
-        unimplemented!()
-    }
-
-    pub fn make_turn(&mut self, turn: TurnType) {
-        unimplemented!()
-    }
-
-    pub fn get_tile_colour(&self, row: usize, col: usize) -> Colour {
-        unimplemented!()
-    }
-
-    pub fn is_solved(&self) -> bool {
-        unimplemented!()
-    }
-
-    fn get_tile_raw(&self, row: usize, col: usize) -> u8 {
+    fn cycle_edges(&mut self, face_type: FaceType, turn_type: TurnType) {
         unimplemented!()
     }
 }
@@ -88,22 +65,4 @@ impl Turn {
     pub fn new(face_index: usize, turn_type: TurnType) -> Self {
         unimplemented!()
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn face_new() {
-        let face = Face::new(Colour::Green);
-        for i in 0..CUBE_SIZE {
-            for j in 0..CUBE_SIZE {
-                assert_eq!(face.get_tile_colour(i, j), Colour::Green);
-            }
-        }
-    }
-
-    #[test]
-    fn cube_new() {}
 }
