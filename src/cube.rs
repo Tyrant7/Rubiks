@@ -1,30 +1,10 @@
 use crate::{
-    face::Face,
+    face::{Face, FaceType},
     turn::{Turn, TurnType},
 };
 
 pub struct Cube {
     faces: [Face; 6],
-}
-
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub enum Colour {
-    White,
-    Red,
-    Green,
-    Blue,
-    Orange,
-    Yellow,
-}
-
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub enum FaceType {
-    Top,
-    Bottom,
-    Front,
-    Back,
-    Left,
-    Right,
 }
 
 impl Cube {

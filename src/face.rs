@@ -1,4 +1,4 @@
-use crate::{cube::Colour, turn::TurnType};
+use crate::turn::TurnType;
 
 /// Used for mapping the internal `u8` representation of tiles to their respective colours
 const FACE_COLOURS: [Colour; 6] = [
@@ -19,6 +19,29 @@ pub const CUBE_SIZE: usize = 3;
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub struct Face {
     tiles: [[u8; CUBE_SIZE]; CUBE_SIZE],
+}
+
+/// Represents the orientation of a face.
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum FaceType {
+    Top,
+    Bottom,
+    Front,
+    Back,
+    Left,
+    Right,
+}
+
+/// Represents the colour of a face.
+/// Used for mapping orientations to their visual display.
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum Colour {
+    White,
+    Red,
+    Green,
+    Blue,
+    Orange,
+    Yellow,
 }
 
 impl Face {
