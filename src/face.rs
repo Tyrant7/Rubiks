@@ -16,7 +16,7 @@ pub const CUBE_SIZE: usize = 3;
 /// Represents a single face of the cube as a 2D grid of tiles.
 /// Each tile value is a `u8` corresponding to a [`Colour`], representing
 /// which face the tile belongs to in the solved state.
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct Face {
     tiles: [[u8; CUBE_SIZE]; CUBE_SIZE],
 }
@@ -101,7 +101,7 @@ impl Face {
     }
 
     /// Sets the tile at the given column and row to the given colour.
-    fn set_tile_colour(&mut self, row: usize, col: usize, tile: Colour) {
+    pub fn set_tile_colour(&mut self, row: usize, col: usize, tile: Colour) {
         self.tiles[row][col] = tile as u8;
     }
 
