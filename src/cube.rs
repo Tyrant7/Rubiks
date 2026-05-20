@@ -8,7 +8,7 @@ pub struct Cube {
     faces: [Face; 6],
 }
 
-enum ScrambleType {
+pub enum ScrambleType {
     Random,
     Seeded(u128),
 }
@@ -35,10 +35,6 @@ impl Cube {
     }
 
     pub fn is_solved(&self) -> bool {
-        unimplemented!()
-    }
-
-    fn cycle_edges(&mut self, face_type: FaceType, turn_type: TurnType) {
         unimplemented!()
     }
 }
@@ -89,7 +85,17 @@ mod tests {
     }
 
     #[test]
-    fn make_turns_left_edge() {}
+    fn make_turns_left_edge() {
+        let mut cube = Cube::new();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
+
+        // Check adjacent faces to the turned one
+        cube.get_face(FaceType::Front);
+        cube.get_face(FaceType::Back);
+        cube.get_face(FaceType::Left);
+        cube.get_face(FaceType::Right);
+        todo!()
+    }
 
     #[test]
     fn make_turns_right_edge() {}

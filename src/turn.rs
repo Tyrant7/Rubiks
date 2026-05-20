@@ -1,5 +1,7 @@
+use crate::face::FaceType;
+
 pub struct Turn {
-    face_index: usize,
+    face_type: FaceType,
     turn_type: TurnType,
 }
 
@@ -10,9 +12,9 @@ pub enum TurnType {
 }
 
 impl Turn {
-    pub fn new(face_index: usize, turn_type: TurnType) -> Self {
+    pub fn new(face_type: FaceType, turn_type: TurnType) -> Self {
         Turn {
-            face_index,
+            face_type,
             turn_type,
         }
     }
