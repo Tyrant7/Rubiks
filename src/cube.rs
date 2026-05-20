@@ -3,6 +3,7 @@ use crate::{
     turn::{Turn, TurnType},
 };
 
+#[derive(PartialEq, Debug)]
 pub struct Cube {
     faces: [Face; 6],
 }
@@ -63,7 +64,29 @@ mod tests {
     }
 
     #[test]
-    fn scramble() {}
+    fn scramble_not_solved() {
+        let mut cube = Cube::new();
+        cube.scramble(20, ScrambleType::Seeded(42));
+        assert!(!cube.is_solved());
+    }
+
+    #[test]
+    fn scramble_seeded_deterministic() {
+        let mut cube_a = Cube::new();
+        let mut cube_b = Cube::new();
+        cube_a.scramble(20, ScrambleType::Seeded(20));
+        cube_b.scramble(20, ScrambleType::Seeded(20));
+        assert_eq!(cube_a, cube_b);
+    }
+
+    #[test]
+    fn scramble_different_seeds_differ() {
+        let mut cube_a = Cube::new();
+        let mut cube_b = Cube::new();
+        cube_a.scramble(20, ScrambleType::Seeded(50));
+        cube_b.scramble(20, ScrambleType::Seeded(51));
+        assert_ne!(cube_a, cube_b);
+    }
 
     #[test]
     fn make_turns_left_edge() {}
