@@ -11,6 +11,9 @@ pub enum TurnType {
 
 impl Turn {
     pub fn new(face_index: usize, turn_type: TurnType) -> Self {
-        unimplemented!()
+        Turn {
+            face_index,
+            turn_type,
+        }
     }
 }
