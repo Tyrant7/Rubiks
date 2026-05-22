@@ -117,6 +117,12 @@ impl Face {
     }
 }
 
+impl FaceType {
+    pub fn get_solved_colour(&self) -> Colour {
+        FACE_COLOURS[*self as usize]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

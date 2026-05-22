@@ -85,38 +85,110 @@ mod tests {
     }
 
     #[test]
-    fn make_turns_left_edge() {
+    fn make_turn_clockwise() {
         let mut cube = Cube::new();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
 
         // Check adjacent faces to the turned one
-        cube.get_face(FaceType::Front);
-        cube.get_face(FaceType::Back);
-        cube.get_face(FaceType::Left);
-        cube.get_face(FaceType::Right);
-        todo!()
+        assert_eq!(
+            cube.get_face(FaceType::Front).get_tile_colour(2, 0),
+            FaceType::Left.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Left).get_tile_colour(2, 0),
+            FaceType::Back.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Back).get_tile_colour(2, 1),
+            FaceType::Right.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Right).get_tile_colour(2, 2),
+            FaceType::Front.get_solved_colour()
+        );
     }
 
     #[test]
-    fn make_turns_right_edge() {}
+    fn make_turn_counterclockwise() {
+        let mut cube = Cube::new();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
+
+        // Check one tile on each of the adjacent faces to the turned one
+        assert_eq!(
+            cube.get_face(FaceType::Front).get_tile_colour(2, 0),
+            FaceType::Right.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Right).get_tile_colour(2, 0),
+            FaceType::Back.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Back).get_tile_colour(2, 1),
+            FaceType::Left.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Left).get_tile_colour(2, 2),
+            FaceType::Front.get_solved_colour()
+        );
+    }
 
     #[test]
-    fn make_turns_top_edge() {}
+    fn make_turn_half() {
+        let mut cube = Cube::new();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Half));
+
+        // Check one tile on each of the adjacent faces to the turned one
+        assert_eq!(
+            cube.get_face(FaceType::Front).get_tile_colour(2, 0),
+            FaceType::Back.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Right).get_tile_colour(2, 0),
+            FaceType::Left.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Back).get_tile_colour(2, 1),
+            FaceType::Front.get_solved_colour()
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Left).get_tile_colour(2, 2),
+            FaceType::Right.get_solved_colour()
+        );
+    }
 
     #[test]
-    fn make_turns_bottom_edge() {}
+    fn make_turns_reversible() {
+        let mut cube = Cube::new();
 
-    #[test]
-    fn is_solved_false() {
-        let cube = Cube::new();
+        // Turn in
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Top, TurnType::Clockwise));
+        cube.make_turn(Turn::new(FaceType::Right, TurnType::Half));
+        cube.make_turn(Turn::new(FaceType::Left, TurnType::Clockwise));
+        cube.make_turn(Turn::new(FaceType::Front, TurnType::Clockwise));
+        cube.make_turn(Turn::new(FaceType::Back, TurnType::Half));
+
+        // Turn out
+        cube.make_turn(Turn::new(FaceType::Back, TurnType::Half));
+        cube.make_turn(Turn::new(FaceType::Front, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Left, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Right, TurnType::Half));
+        cube.make_turn(Turn::new(FaceType::Top, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
+
         assert!(cube.is_solved());
     }
 
     #[test]
     fn is_solved_true() {
+        let cube = Cube::new();
+        assert!(cube.is_solved());
+    }
+
+    #[test]
+    fn is_solved_false() {
         let mut cube = Cube::new();
-        cube.get_face_mut(FaceType::Bottom)
-            .set_tile_colour(0, 0, Colour::Yellow);
+        cube.make_turn(Turn::new(FaceType::Right, TurnType::Half));
         assert!(!cube.is_solved());
     }
 }
