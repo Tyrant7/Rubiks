@@ -1,8 +1,8 @@
 use crate::face::FaceType;
 
 pub struct Turn {
-    face_type: FaceType,
-    turn_type: TurnType,
+    pub face_type: FaceType,
+    pub turn_type: TurnType,
 }
 
 #[derive(Clone, Copy)]

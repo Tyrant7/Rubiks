@@ -58,7 +58,47 @@ impl Cube {
     }
 
     pub fn make_turn(&mut self, turn: Turn) {
-        unimplemented!()
+        self.get_face_mut(turn.face_type).make_turn(turn.turn_type);
+        self.cycle_edges(turn);
+    }
+
+    fn cycle_edges(&mut self, turn: Turn) {
+        let edges = turn.face_type.get_edges();
+
+        // Read all 4 edges first
+        let mut data: [_; 4] = std::array::from_fn(|i| {
+            let e = &edges[i];
+            let mut tiles = if e.is_row {
+                self.get_face(e.face).get_row(e.index)
+            } else {
+                self.get_face(e.face).get_col(e.index)
+            };
+            if e.reversed {
+                tiles.reverse();
+            }
+            tiles
+        });
+
+        // Rotate the data array by the cycle amount
+        let shift = match turn.turn_type {
+            TurnType::Clockwise => 3, // rotate right by 1 = left by 3
+            TurnType::CounterClockwise => 1,
+            TurnType::Half => 2,
+        };
+        data.rotate_left(shift);
+
+        // Write back
+        for (i, e) in edges.iter().enumerate() {
+            let mut tiles = data[i];
+            if e.reversed {
+                tiles.reverse();
+            }
+            if e.is_row {
+                self.get_face_mut(e.face).set_row(e.index, tiles);
+            } else {
+                self.get_face_mut(e.face).set_col(e.index, tiles);
+            }
+        }
     }
 
     pub fn get_face(&self, face_type: FaceType) -> &Face {

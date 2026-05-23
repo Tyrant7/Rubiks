@@ -32,6 +32,13 @@ pub enum FaceType {
     Right,
 }
 
+pub struct EdgeRef {
+    pub face: FaceType,
+    pub index: usize,
+    pub is_row: bool,
+    pub reversed: bool,
+}
+
 /// Represents the colour of a face.
 /// Used for mapping orientations to their visual display.
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -105,6 +112,24 @@ impl Face {
         self.tiles[row][col] = tile as u8;
     }
 
+    pub fn get_row(&self, row: usize) -> [u8; CUBE_SIZE] {
+        self.tiles[row]
+    }
+
+    pub fn get_col(&self, col: usize) -> [u8; CUBE_SIZE] {
+        std::array::from_fn(|i| self.tiles[i][col])
+    }
+
+    pub fn set_row(&mut self, row: usize, data: [u8; CUBE_SIZE]) {
+        self.tiles[row] = data;
+    }
+
+    pub fn set_col(&mut self, col: usize, data: [u8; CUBE_SIZE]) {
+        for i in 0..CUBE_SIZE {
+            self.tiles[i][col] = data[i];
+        }
+    }
+
     /// Returns true if all tiles on this face are the same colour.
     pub fn is_solved(&self) -> bool {
         let first = self.get_tile_raw(0, 0);
@@ -118,8 +143,51 @@ impl Face {
 }
 
 impl FaceType {
+    /// Returns the corresponding colour of this face in its initial position
     pub fn get_solved_colour(&self) -> Colour {
         FACE_COLOURS[*self as usize]
+    }
+
+    #[rustfmt::skip]
+    pub fn get_edges(&self) -> [EdgeRef; 4] {
+        match self {
+            FaceType::Top => [
+                EdgeRef { face: FaceType::Front, index: 0, is_row: true,  reversed: false },
+                EdgeRef { face: FaceType::Left,  index: 0, is_row: true,  reversed: false },
+                EdgeRef { face: FaceType::Back,  index: 0, is_row: true,  reversed: true  },
+                EdgeRef { face: FaceType::Right, index: 0, is_row: true,  reversed: false },
+            ],
+            FaceType::Bottom => [
+                EdgeRef { face: FaceType::Front, index: CUBE_SIZE - 1, is_row: true,  reversed: false },
+                EdgeRef { face: FaceType::Right, index: CUBE_SIZE - 1, is_row: true,  reversed: false },
+                EdgeRef { face: FaceType::Back,  index: CUBE_SIZE - 1, is_row: true,  reversed: true  },
+                EdgeRef { face: FaceType::Left,  index: CUBE_SIZE - 1, is_row: true,  reversed: false },
+            ],
+            FaceType::Left => [
+                EdgeRef { face: FaceType::Front,  index: 0,             is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Top,    index: 0,             is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Back,   index: CUBE_SIZE - 1, is_row: false, reversed: true  },
+                EdgeRef { face: FaceType::Bottom, index: 0,            is_row: false, reversed: false },
+            ],
+            FaceType::Right => [
+                EdgeRef { face: FaceType::Front,  index: CUBE_SIZE - 1, is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Bottom, index: CUBE_SIZE - 1, is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Back,   index: 0,             is_row: false, reversed: true  },
+                EdgeRef { face: FaceType::Top,    index: CUBE_SIZE - 1, is_row: false, reversed: false },
+            ],
+            FaceType::Front => [
+                EdgeRef { face: FaceType::Top,    index: CUBE_SIZE - 1, is_row: true,  reversed: false },
+                EdgeRef { face: FaceType::Right,  index: 0,             is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Bottom, index: 0,             is_row: true,  reversed: true  },
+                EdgeRef { face: FaceType::Left,   index: CUBE_SIZE - 1, is_row: false, reversed: true  },
+            ],
+            FaceType::Back => [
+                EdgeRef { face: FaceType::Top,    index: 0,             is_row: true,  reversed: true  },
+                EdgeRef { face: FaceType::Left,   index: 0,             is_row: false, reversed: true  },
+                EdgeRef { face: FaceType::Bottom, index: CUBE_SIZE - 1, is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Right,  index: CUBE_SIZE - 1, is_row: false, reversed: true  },
+            ],
+        }
     }
 }
 
