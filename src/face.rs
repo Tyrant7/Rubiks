@@ -14,11 +14,9 @@ const FACE_COLOURS: [Colour; 6] = [
 pub const CUBE_SIZE: usize = 3;
 
 /// Represents a single face of the cube as a 2D grid of tiles.
-/// Each tile value is a `u8` corresponding to a [`Colour`], representing
-/// which face the tile belongs to in the solved state.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct Face {
-    tiles: [[u8; CUBE_SIZE]; CUBE_SIZE],
+    tiles: [[Colour; CUBE_SIZE]; CUBE_SIZE],
 }
 
 /// Represents the orientation of a face.
@@ -41,7 +39,7 @@ pub struct EdgeRef {
 
 /// Represents the colour of a face.
 /// Used for mapping orientations to their visual display.
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum Colour {
     White,
     Red,
@@ -54,9 +52,8 @@ pub enum Colour {
 impl Face {
     /// Creates a new face with all tiles set to the given colour.
     pub fn new(colour: Colour) -> Self {
-        let fill = colour as u8;
         Face {
-            tiles: [[fill; CUBE_SIZE]; CUBE_SIZE],
+            tiles: [[colour; CUBE_SIZE]; CUBE_SIZE],
         }
     }
 
@@ -104,27 +101,27 @@ impl Face {
 
     /// Returns the colour of the tile at the given column and row.
     pub fn get_tile_colour(&self, row: usize, col: usize) -> Colour {
-        FACE_COLOURS[self.tiles[row][col] as usize]
+        self.tiles[row][col]
     }
 
     /// Sets the tile at the given column and row to the given colour.
     pub fn set_tile_colour(&mut self, row: usize, col: usize, tile: Colour) {
-        self.tiles[row][col] = tile as u8;
+        self.tiles[row][col] = tile;
     }
 
-    pub fn get_row(&self, row: usize) -> [u8; CUBE_SIZE] {
+    pub fn get_row(&self, row: usize) -> [Colour; CUBE_SIZE] {
         self.tiles[row]
     }
 
-    pub fn get_col(&self, col: usize) -> [u8; CUBE_SIZE] {
+    pub fn get_col(&self, col: usize) -> [Colour; CUBE_SIZE] {
         std::array::from_fn(|i| self.tiles[i][col])
     }
 
-    pub fn set_row(&mut self, row: usize, data: [u8; CUBE_SIZE]) {
+    pub fn set_row(&mut self, row: usize, data: [Colour; CUBE_SIZE]) {
         self.tiles[row] = data;
     }
 
-    pub fn set_col(&mut self, col: usize, data: [u8; CUBE_SIZE]) {
+    pub fn set_col(&mut self, col: usize, data: [Colour; CUBE_SIZE]) {
         for i in 0..CUBE_SIZE {
             self.tiles[i][col] = data[i];
         }
@@ -132,13 +129,8 @@ impl Face {
 
     /// Returns true if all tiles on this face are the same colour.
     pub fn is_solved(&self) -> bool {
-        let first = self.get_tile_raw(0, 0);
+        let first = self.get_tile_colour(0, 0);
         self.tiles.iter().flatten().all(|&x| x == first)
-    }
-
-    /// Returns the raw `u8` value of the tile at the given column and row.
-    fn get_tile_raw(&self, row: usize, col: usize) -> u8 {
-        self.tiles[row][col]
     }
 }
 

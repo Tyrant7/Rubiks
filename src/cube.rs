@@ -166,19 +166,19 @@ mod tests {
 
         assert_eq!(
             cube.get_face(FaceType::Front).get_row(2),
-            [FaceType::Left.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Left.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Left).get_row(2),
-            [FaceType::Back.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Back.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Back).get_row(2),
-            [FaceType::Right.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Right.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Right).get_row(2),
-            [FaceType::Front.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Front.get_solved_colour(); CUBE_SIZE]
         );
     }
 
@@ -189,19 +189,19 @@ mod tests {
 
         assert_eq!(
             cube.get_face(FaceType::Front).get_row(2),
-            [FaceType::Right.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Right.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Right).get_row(2),
-            [FaceType::Back.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Back.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Back).get_row(2),
-            [FaceType::Left.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Left.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Left).get_row(2),
-            [FaceType::Front.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Front.get_solved_colour(); CUBE_SIZE]
         );
     }
 
@@ -212,19 +212,19 @@ mod tests {
 
         assert_eq!(
             cube.get_face(FaceType::Front).get_row(2),
-            [FaceType::Back.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Back.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Right).get_row(2),
-            [FaceType::Left.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Left.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Back).get_row(2),
-            [FaceType::Front.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Front.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Left).get_row(2),
-            [FaceType::Right.get_solved_colour() as u8; CUBE_SIZE]
+            [FaceType::Right.get_solved_colour(); CUBE_SIZE]
         );
     }
 
