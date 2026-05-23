@@ -1,3 +1,7 @@
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::IteratorRandom;
+
 use crate::{
     face::{Face, FaceType},
     turn::{Turn, TurnType},
@@ -10,16 +14,47 @@ pub struct Cube {
 
 pub enum ScrambleType {
     Random,
-    Seeded(u128),
+    Seeded(u64),
 }
 
 impl Cube {
     pub fn new() -> Self {
-        unimplemented!()
+        Cube {
+            faces: [
+                Face::new(FaceType::Top.get_solved_colour()),
+                Face::new(FaceType::Bottom.get_solved_colour()),
+                Face::new(FaceType::Front.get_solved_colour()),
+                Face::new(FaceType::Back.get_solved_colour()),
+                Face::new(FaceType::Left.get_solved_colour()),
+                Face::new(FaceType::Right.get_solved_colour()),
+            ],
+        }
     }
 
     pub fn scramble(&mut self, moves: usize, scramble_type: ScrambleType) {
-        unimplemented!()
+        let mut rng: Box<dyn rand::Rng> = match scramble_type {
+            ScrambleType::Seeded(seed) => Box::new(StdRng::seed_from_u64(seed)),
+            ScrambleType::Random => Box::new(rand::rng()),
+        };
+        let faces = [
+            FaceType::Top,
+            FaceType::Bottom,
+            FaceType::Front,
+            FaceType::Back,
+            FaceType::Left,
+            FaceType::Right,
+        ];
+        let turn_types = [
+            TurnType::Clockwise,
+            TurnType::CounterClockwise,
+            TurnType::Half,
+        ];
+        for _ in 0..moves {
+            self.make_turn(Turn::new(
+                *faces.iter().choose(&mut rng).unwrap(),
+                *turn_types.iter().choose(&mut rng).unwrap(),
+            ));
+        }
     }
 
     pub fn make_turn(&mut self, turn: Turn) {
@@ -27,23 +62,21 @@ impl Cube {
     }
 
     pub fn get_face(&self, face_type: FaceType) -> &Face {
-        unimplemented!()
+        &self.faces[face_type as usize]
     }
 
-    pub fn get_face_mut(&mut self, face_type: FaceType) -> &mut Face {
-        unimplemented!()
+    fn get_face_mut(&mut self, face_type: FaceType) -> &mut Face {
+        &mut self.faces[face_type as usize]
     }
 
     pub fn is_solved(&self) -> bool {
-        unimplemented!()
+        self.faces.iter().all(|x| x.is_solved())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-
-    use crate::face::Colour;
 
     use super::*;
 

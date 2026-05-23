@@ -5,6 +5,7 @@ pub struct Turn {
     turn_type: TurnType,
 }
 
+#[derive(Clone, Copy)]
 pub enum TurnType {
     Clockwise,
     CounterClockwise,
