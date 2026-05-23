@@ -123,8 +123,8 @@ impl Face {
     }
 
     pub fn set_col(&mut self, col: usize, data: [Colour; CUBE_SIZE]) {
-        for i in 0..CUBE_SIZE {
-            self.tiles[i][col] = data[i];
+        for (row, d) in self.tiles.iter_mut().zip(data) {
+            row[col] = d;
         }
     }
 
