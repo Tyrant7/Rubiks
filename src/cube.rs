@@ -221,7 +221,8 @@ mod tests {
     #[test]
     fn is_solved_false() {
         let mut cube = Cube::new();
-        cube.make_turn(Turn::new(FaceType::Right, TurnType::Half));
+        cube.get_face_mut(FaceType::Back)
+            .set_tile_colour(0, 0, crate::face::Colour::Yellow);
         assert!(!cube.is_solved());
     }
 }
