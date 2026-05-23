@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn scramble_not_solved() {
         let mut cube = Cube::new();
-        cube.scramble(20, ScrambleType::Seeded(42));
+        cube.scramble(30, ScrambleType::Seeded(42));
         assert!(!cube.is_solved());
     }
 
@@ -143,8 +143,8 @@ mod tests {
     fn scramble_seeded_deterministic() {
         let mut cube_a = Cube::new();
         let mut cube_b = Cube::new();
-        cube_a.scramble(20, ScrambleType::Seeded(20));
-        cube_b.scramble(20, ScrambleType::Seeded(20));
+        cube_a.scramble(30, ScrambleType::Seeded(20));
+        cube_b.scramble(30, ScrambleType::Seeded(20));
         assert_eq!(cube_a, cube_b);
     }
 
@@ -152,8 +152,8 @@ mod tests {
     fn scramble_different_seeds_differ() {
         let mut cube_a = Cube::new();
         let mut cube_b = Cube::new();
-        cube_a.scramble(20, ScrambleType::Seeded(50));
-        cube_b.scramble(20, ScrambleType::Seeded(51));
+        cube_a.scramble(30, ScrambleType::Seeded(50));
+        cube_b.scramble(30, ScrambleType::Seeded(51));
         assert_ne!(cube_a, cube_b);
     }
 
