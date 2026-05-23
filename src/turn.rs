@@ -1,11 +1,12 @@
 use crate::face::FaceType;
 
+#[derive(Clone, Copy, Debug)]
 pub struct Turn {
     pub face_type: FaceType,
     pub turn_type: TurnType,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TurnType {
     Clockwise,
     CounterClockwise,

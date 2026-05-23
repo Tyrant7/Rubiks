@@ -7,11 +7,12 @@ use crate::{
     turn::{Turn, TurnType},
 };
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct Cube {
     faces: [Face; 6],
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum ScrambleType {
     Random,
     Seeded(u64),

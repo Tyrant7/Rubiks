@@ -1,6 +1,6 @@
 use crate::turn::TurnType;
 
-/// Used for mapping the internal `u8` representation of tiles to their respective colours
+/// Used for mapping `FaceType` representation of tiles to their respective colours
 const FACE_COLOURS: [Colour; 6] = [
     Colour::White,
     Colour::Red,
@@ -30,6 +30,7 @@ pub enum FaceType {
     Right,
 }
 
+#[derive(Clone, Debug)]
 pub struct EdgeRef {
     pub face: FaceType,
     pub index: usize,
@@ -159,7 +160,7 @@ impl FaceType {
                 EdgeRef { face: FaceType::Front,  index: 0,             is_row: false, reversed: false },
                 EdgeRef { face: FaceType::Top,    index: 0,             is_row: false, reversed: false },
                 EdgeRef { face: FaceType::Back,   index: CUBE_SIZE - 1, is_row: false, reversed: true  },
-                EdgeRef { face: FaceType::Bottom, index: 0,            is_row: false, reversed: false },
+                EdgeRef { face: FaceType::Bottom, index: 0,             is_row: false, reversed: false },
             ],
             FaceType::Right => [
                 EdgeRef { face: FaceType::Front,  index: CUBE_SIZE - 1, is_row: false, reversed: false },
