@@ -118,6 +118,8 @@ impl Cube {
 mod tests {
     use std::collections::HashSet;
 
+    use crate::face::CUBE_SIZE;
+
     use super::*;
 
     #[test]
@@ -162,22 +164,21 @@ mod tests {
         let mut cube = Cube::new();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
 
-        // Check adjacent faces to the turned one
         assert_eq!(
-            cube.get_face(FaceType::Front).get_tile_colour(2, 0),
-            FaceType::Left.get_solved_colour()
+            cube.get_face(FaceType::Front).get_row(2),
+            [FaceType::Left.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Left).get_tile_colour(2, 0),
-            FaceType::Back.get_solved_colour()
+            cube.get_face(FaceType::Left).get_row(2),
+            [FaceType::Back.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Back).get_tile_colour(2, 1),
-            FaceType::Right.get_solved_colour()
+            cube.get_face(FaceType::Back).get_row(2),
+            [FaceType::Right.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Right).get_tile_colour(2, 2),
-            FaceType::Front.get_solved_colour()
+            cube.get_face(FaceType::Right).get_row(2),
+            [FaceType::Front.get_solved_colour() as u8; CUBE_SIZE]
         );
     }
 
@@ -186,22 +187,21 @@ mod tests {
         let mut cube = Cube::new();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
 
-        // Check one tile on each of the adjacent faces to the turned one
         assert_eq!(
-            cube.get_face(FaceType::Front).get_tile_colour(2, 0),
-            FaceType::Right.get_solved_colour()
+            cube.get_face(FaceType::Front).get_row(2),
+            [FaceType::Right.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Right).get_tile_colour(2, 0),
-            FaceType::Back.get_solved_colour()
+            cube.get_face(FaceType::Right).get_row(2),
+            [FaceType::Back.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Back).get_tile_colour(2, 1),
-            FaceType::Left.get_solved_colour()
+            cube.get_face(FaceType::Back).get_row(2),
+            [FaceType::Left.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Left).get_tile_colour(2, 2),
-            FaceType::Front.get_solved_colour()
+            cube.get_face(FaceType::Left).get_row(2),
+            [FaceType::Front.get_solved_colour() as u8; CUBE_SIZE]
         );
     }
 
@@ -210,22 +210,21 @@ mod tests {
         let mut cube = Cube::new();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Half));
 
-        // Check one tile on each of the adjacent faces to the turned one
         assert_eq!(
-            cube.get_face(FaceType::Front).get_tile_colour(2, 0),
-            FaceType::Back.get_solved_colour()
+            cube.get_face(FaceType::Front).get_row(2),
+            [FaceType::Back.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Right).get_tile_colour(2, 0),
-            FaceType::Left.get_solved_colour()
+            cube.get_face(FaceType::Right).get_row(2),
+            [FaceType::Left.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Back).get_tile_colour(2, 1),
-            FaceType::Front.get_solved_colour()
+            cube.get_face(FaceType::Back).get_row(2),
+            [FaceType::Front.get_solved_colour() as u8; CUBE_SIZE]
         );
         assert_eq!(
-            cube.get_face(FaceType::Left).get_tile_colour(2, 2),
-            FaceType::Right.get_solved_colour()
+            cube.get_face(FaceType::Left).get_row(2),
+            [FaceType::Right.get_solved_colour() as u8; CUBE_SIZE]
         );
     }
 
