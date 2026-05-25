@@ -129,6 +129,11 @@ impl Cube {
     pub fn is_solved(&self) -> bool {
         self.faces.iter().all(|x| x.is_solved())
     }
+
+    /// Returns the number of solved faces on this cube.
+    pub fn count_solved_faces(&self) -> usize {
+        self.faces.iter().filter(|&x| x.is_solved()).count()
+    }
 }
 
 #[cfg(test)]
@@ -280,5 +285,18 @@ mod tests {
         cube.get_face_mut(FaceType::Back)
             .set_tile_colour(0, 0, crate::face::Colour::Yellow);
         assert!(!cube.is_solved());
+    }
+
+    #[test]
+    fn count_solved_all() {
+        let cube = Cube::default();
+        assert_eq!(cube.count_solved_faces(), 6);
+    }
+
+    #[test]
+    fn count_solved_after_one_move() {
+        let mut cube = Cube::default();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
+        assert_eq!(cube.count_solved_faces(), 2);
     }
 }
