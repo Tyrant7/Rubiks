@@ -7,18 +7,24 @@ use crate::{
     turn::{Turn, TurnType},
 };
 
+/// Represents a Rubik's cube as an array of six [`Face`]s.
 #[derive(PartialEq, Clone, Debug)]
 pub struct Cube {
+    /// Indexed by [`FaceType`] cast to `usize`.
     faces: [Face; 6],
 }
 
+/// Controls how the random number generator is seeded during a scramble.
 #[derive(Clone, Copy, Debug)]
 pub enum ScrambleType {
+    /// Uses a non-deterministic random source.
     Random,
+    /// Uses a fixed seed, producing the same scramble every time.
     Seeded(u64),
 }
 
 impl Cube {
+    /// Creates a new solved cube with each face set to its default colour.
     pub fn new() -> Self {
         Cube {
             faces: [
@@ -32,6 +38,8 @@ impl Cube {
         }
     }
 
+    /// Scrambles the cube by applying a number of random turns.
+    /// Use [`ScrambleType::Seeded`] for a reproducible scramble.
     pub fn scramble(&mut self, moves: usize, scramble_type: ScrambleType) {
         let mut rng: Box<dyn rand::Rng> = match scramble_type {
             ScrambleType::Seeded(seed) => Box::new(StdRng::seed_from_u64(seed)),
@@ -58,11 +66,14 @@ impl Cube {
         }
     }
 
+    /// Applies a single turn to the cube, rotating the face and cycling
+    /// the edges of all adjacent faces.
     pub fn make_turn(&mut self, turn: Turn) {
         self.get_face_mut(turn.face_type).make_turn(turn.turn_type);
         self.cycle_edges(turn);
     }
 
+    /// Cycles the edges of the four faces adjacent to the turned face.
     fn cycle_edges(&mut self, turn: Turn) {
         let edges = turn.face_type.get_edges();
 
@@ -102,14 +113,17 @@ impl Cube {
         }
     }
 
+    /// Returns a reference to the face with the given [`FaceType`].
     pub fn get_face(&self, face_type: FaceType) -> &Face {
         &self.faces[face_type as usize]
     }
 
+    /// Returns a mutable reference to the face with the given [`FaceType`].
     fn get_face_mut(&mut self, face_type: FaceType) -> &mut Face {
         &mut self.faces[face_type as usize]
     }
 
+    /// Returns true if all faces are solved, i.e. each face is a single colour.
     pub fn is_solved(&self) -> bool {
         self.faces.iter().all(|x| x.is_solved())
     }
