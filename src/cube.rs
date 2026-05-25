@@ -23,10 +23,10 @@ pub enum ScrambleType {
     Seeded(u64),
 }
 
-impl Cube {
+impl Default for Cube {
     /// Creates a new solved cube with each face set to its default colour.
-    pub fn new() -> Self {
-        Cube {
+    fn default() -> Self {
+        Self {
             faces: [
                 Face::new(FaceType::Top.get_solved_colour()),
                 Face::new(FaceType::Bottom.get_solved_colour()),
@@ -37,7 +37,9 @@ impl Cube {
             ],
         }
     }
+}
 
+impl Cube {
     /// Scrambles the cube by applying a number of random turns.
     /// Use [`ScrambleType::Seeded`] for a reproducible scramble.
     pub fn scramble(&mut self, moves: usize, scramble_type: ScrambleType) {
@@ -139,7 +141,7 @@ mod tests {
 
     #[test]
     fn new_cube() {
-        let cube = Cube::new();
+        let cube = Cube::default();
 
         // Ensure all faces are unique
         let mut set = HashSet::new();
@@ -151,15 +153,15 @@ mod tests {
 
     #[test]
     fn scramble_not_solved() {
-        let mut cube = Cube::new();
+        let mut cube = Cube::default();
         cube.scramble(30, ScrambleType::Seeded(42));
         assert!(!cube.is_solved());
     }
 
     #[test]
     fn scramble_seeded_deterministic() {
-        let mut cube_a = Cube::new();
-        let mut cube_b = Cube::new();
+        let mut cube_a = Cube::default();
+        let mut cube_b = Cube::default();
         cube_a.scramble(30, ScrambleType::Seeded(20));
         cube_b.scramble(30, ScrambleType::Seeded(20));
         assert_eq!(cube_a, cube_b);
@@ -167,8 +169,8 @@ mod tests {
 
     #[test]
     fn scramble_different_seeds_differ() {
-        let mut cube_a = Cube::new();
-        let mut cube_b = Cube::new();
+        let mut cube_a = Cube::default();
+        let mut cube_b = Cube::default();
         cube_a.scramble(30, ScrambleType::Seeded(50));
         cube_b.scramble(30, ScrambleType::Seeded(51));
         assert_ne!(cube_a, cube_b);
@@ -176,7 +178,7 @@ mod tests {
 
     #[test]
     fn make_turn_clockwise() {
-        let mut cube = Cube::new();
+        let mut cube = Cube::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
 
         assert_eq!(
@@ -199,7 +201,7 @@ mod tests {
 
     #[test]
     fn make_turn_counterclockwise() {
-        let mut cube = Cube::new();
+        let mut cube = Cube::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
 
         assert_eq!(
@@ -222,7 +224,7 @@ mod tests {
 
     #[test]
     fn make_turn_half() {
-        let mut cube = Cube::new();
+        let mut cube = Cube::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Half));
 
         assert_eq!(
@@ -245,7 +247,7 @@ mod tests {
 
     #[test]
     fn make_turns_reversible() {
-        let mut cube = Cube::new();
+        let mut cube = Cube::default();
 
         // Turn in
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
@@ -268,13 +270,13 @@ mod tests {
 
     #[test]
     fn is_solved_true() {
-        let cube = Cube::new();
+        let cube = Cube::default();
         assert!(cube.is_solved());
     }
 
     #[test]
     fn is_solved_false() {
-        let mut cube = Cube::new();
+        let mut cube = Cube::default();
         cube.get_face_mut(FaceType::Back)
             .set_tile_colour(0, 0, crate::face::Colour::Yellow);
         assert!(!cube.is_solved());

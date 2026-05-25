@@ -115,6 +115,7 @@ impl Face {
     }
 
     /// Sets the tile at the given row and column to the given colour.
+    #[allow(dead_code)]
     pub fn set_tile_colour(&mut self, row: usize, col: usize, tile: Colour) {
         self.tiles[row][col] = tile;
     }
