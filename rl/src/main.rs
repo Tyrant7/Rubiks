@@ -1,5 +1,11 @@
 use rubiks::{CUBE_SIZE, Cube};
-use tch::Tensor;
+use tch::{
+    Device, Tensor,
+    nn::{self, Module},
+};
+
+const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
+const OUTPUT_SIZE: usize = 4 * 3;
 
 fn main() {
     // let cube = Cube::default();
@@ -9,6 +15,19 @@ fn main() {
 
 fn train() {
     // Define hyperparameters
+    let epochs = 1000;
+    let update_step = 10;
+    let epsilon = 0.9;
+    let epsilon_decay = 0.5;
+    let gamma = 0.99;
+
+    // Initialize models
+    let vs = nn::VarStore::new(Device::Cpu);
+    let policy_network = initialize_network(vs / "policy_net");
+    let target_network = initialize_network(vs / "target_net");
+
+    // Train loop
+    for i in 0..epochs {}
 
     /*
     1. Encode current state
@@ -33,7 +52,7 @@ fn train() {
 /// Generates a one-hot encoding for the given cube of dimensions
 /// faces * width * height * colour
 fn encode_cube(cube: &Cube) -> Tensor {
-    let mut data = Vec::with_capacity(6 * 3 * 3 * 6);
+    let mut data = Vec::with_capacity(INPUT_SIZE);
 
     for face in cube.get_faces() {
         for row in 0..CUBE_SIZE {
@@ -47,6 +66,25 @@ fn encode_cube(cube: &Cube) -> Tensor {
     }
 
     Tensor::from_slice(&data) // shape [324]
+}
+
+fn initialize_network(vs: &nn::Path) -> impl Module {
+    nn::seq()
+        .add(nn::linear(
+            vs / "layer1",
+            INPUT_SIZE as i64,
+            256,
+            Default::default(),
+        ))
+        .add_fn(|xs| xs.relu())
+        .add(nn::linear(vs / "layer2", 256, 128, Default::default()))
+        .add_fn(|xs| xs.relu())
+        .add(nn::linear(
+            vs / "layer3",
+            128,
+            OUTPUT_SIZE as i64,
+            Default::default(),
+        ))
 }
 
 fn calculate_reward(space: &CubeEnv) -> f32 {
