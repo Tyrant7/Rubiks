@@ -1,7 +1,7 @@
 use rubiks::{CUBE_SIZE, Cube};
 use tch::{
     Device, Tensor,
-    nn::{self, Module},
+    nn::{self, Module, OptimizerConfig},
 };
 
 const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
@@ -17,36 +17,70 @@ fn train() {
     // Define hyperparameters
     let epochs = 1000;
     let update_step = 10;
-    let epsilon = 0.9;
-    let epsilon_decay = 0.5;
+    let epsilon_start = 0.9;
+    let mut epsilon = epsilon_start;
+    let epsilon_end = 0.05;
+    let epsilon_decay = 0.7;
     let gamma = 0.99;
+    let max_steps = 40;
 
     // Initialize models
-    let vs = nn::VarStore::new(Device::Cpu);
-    let policy_network = initialize_network(vs / "policy_net");
-    let target_network = initialize_network(vs / "target_net");
+    let policy_vs = nn::VarStore::new(Device::Cpu);
+    let target_vs = nn::VarStore::new(Device::Cpu);
+    let policy_vs_root = policy_vs.root();
+    let target_vs_root = target_vs.root();
+    let policy_network = initialize_network(&policy_vs_root);
+    let target_network = initialize_network(&target_vs_root);
+    let mut opt = nn::Adam::default().build(&target_vs, 1e-3);
+
+    // Setup environment
+    let mut cube_env = CubeEnv::new();
+    let mut replay_buffer = ReplayBuffer::new();
 
     // Train loop
-    for i in 0..epochs {}
+    for i in 0..epochs {
+        // 1. Encode current state
+        let mut state = cube_env.reset();
 
-    /*
-    1. Encode current state
-    2. ε-greedy action selection
-         - with prob ε: random action
-         - with prob 1-ε: argmax over Q(s, ·)
-    3. Step environment → (next_state, reward, done)
-    4. Push transition to replay buffer
-    5. If buffer large enough:
-         a. Sample minibatch
-         b. Compute targets:
-              - if done:  target = reward
-              - else:     target = reward + γ · max_a Q_target(next_state, a)
-         c. Compute loss: MSE(Q_policy(state, action), target)
-         d. Backprop + optimiser step
-    6. If done: reset environment (new scramble)
-    7. Every N steps: copy policy weights → target network
-    8. Decay ε
-    */
+        for _ in 0..max_steps {
+            // 2. ε-greedy action selection
+            let action = if rand::random::<f32>() < epsilon {
+                // - with prob ε: random action
+                todo!()
+            } else {
+                // - with prob 1-ε: argmax over Q(s, ·)
+                todo!()
+            };
+
+            // 3. Step environment → (next_state, reward, done)
+            let (next_state, reward, done) = cube_env.step(action);
+
+            // 4. Push transition to replay buffer
+            // replay_buffer.push()
+
+            // 5. If buffer large enough:
+            // a. Sample minibatch
+            // b. Compute targets:
+            //  - if done:  target = reward
+            //  - else:     target = reward + γ · max_a Q_target(next_state, a)
+            // c. Compute loss: MSE(Q_policy(state, action), target)
+            // d. Backprop + optimiser step
+
+            // 6. If done: reset environment (new scramble)
+            if done {
+                break;
+            }
+
+            // 7. Every N steps: copy policy weights → target network
+            todo!();
+
+            // 8. Decay ε
+            todo!();
+
+            // 9. Setup next step
+            state = next_state;
+        }
+    }
 }
 
 /// Generates a one-hot encoding for the given cube of dimensions
@@ -98,6 +132,10 @@ struct CubeEnv {
 }
 
 impl CubeEnv {
+    fn new() -> Self {
+        unimplemented!()
+    }
+
     /// Scrambles this environment's cube and returns the associated state
     fn reset(&mut self) -> Tensor {
         unimplemented!()
@@ -119,6 +157,9 @@ struct ReplayBuffer {
 }
 
 impl ReplayBuffer {
+    fn new() -> Self {
+        unimplemented!()
+    }
     // fn push(&mut self, transition: )
     // fn sample(&self, batch_size: usize) -> ...
 }
