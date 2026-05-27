@@ -1,3 +1,4 @@
+use rand::seq::IndexedRandom;
 use rubiks::{CUBE_SIZE, Cube};
 use tch::{
     Device, Tensor,
@@ -15,12 +16,14 @@ fn main() {
 
 fn train() {
     // Define hyperparameters
-    let epochs = 1000;
+    let episodes = 1;
+    let batch_size = 16;
     let update_step = 10;
     let epsilon_start = 0.9;
-    let mut epsilon = epsilon_start;
-    let epsilon_end = 0.05;
-    let epsilon_decay = 0.7;
+    let epsilon_end = 0.01;
+    let epsilon_decay = 2500;
+    let tau = 0.005;
+    let learning_rate = 1e-3;
     let gamma = 0.99;
     let max_steps = 40;
 
@@ -31,34 +34,46 @@ fn train() {
     let target_vs_root = target_vs.root();
     let policy_network = initialize_network(&policy_vs_root);
     let target_network = initialize_network(&target_vs_root);
-    let mut opt = nn::Adam::default().build(&target_vs, 1e-3);
+    let mut opt = nn::Adam::default().build(&target_vs, learning_rate);
 
     // Setup environment
     let mut cube_env = CubeEnv::new();
-    let mut replay_buffer = ReplayBuffer::new();
+    let mut replay_buffer = ReplayBuffer::new(10000);
+    let mut steps = 0;
 
     // Train loop
-    for i in 0..epochs {
+    for episode in 0..episodes {
         // 1. Encode current state
         let mut state = cube_env.reset();
+
+        // Epsilon with exponential decay
+        let epsilon = epsilon_end
+            + (epsilon_start - epsilon_end) * f32::exp(-1. * steps as f32 / epsilon_decay as f32);
 
         for _ in 0..max_steps {
             // 2. ε-greedy action selection
             let action = if rand::random::<f32>() < epsilon {
-                // - with prob ε: random action
-                todo!()
+                // with prob ε: random action
+                rand::random_range(0..OUTPUT_SIZE)
             } else {
-                // - with prob 1-ε: argmax over Q(s, ·)
-                todo!()
+                // with prob 1-ε: argmax over Q(s, ·)
+                let state_batch = state.unsqueeze(0); // [324] -> [1, 324]
+                let q_values = policy_network.forward(&state_batch);
+                q_values.argmax(1, false).int64_value(&[0]) as usize
             };
 
             // 3. Step environment → (next_state, reward, done)
             let (next_state, reward, done) = cube_env.step(action);
 
             // 4. Push transition to replay buffer
-            // replay_buffer.push()
+            replay_buffer.push(Transition::new(&state, action, reward, &next_state, done));
+
+            // Move to the next state
+            state = next_state;
 
             // 5. If buffer large enough:
+            todo!()
+
             // a. Sample minibatch
             // b. Compute targets:
             //  - if done:  target = reward
@@ -72,14 +87,10 @@ fn train() {
             }
 
             // 7. Every N steps: copy policy weights → target network
-            todo!();
-
-            // 8. Decay ε
-            todo!();
-
-            // 9. Setup next step
-            state = next_state;
+            todo!()
         }
+
+        steps += 1;
     }
 }
 
@@ -149,17 +160,54 @@ impl CubeEnv {
 
 struct ReplayBuffer {
     capacity: usize,
-    states: Vec<Tensor>,
-    actions: Vec<usize>,
-    rewards: Vec<f32>,
-    next_states: Vec<Tensor>,
-    dones: Vec<bool>,
+    transitions: Vec<Transition>,
 }
 
 impl ReplayBuffer {
-    fn new() -> Self {
-        unimplemented!()
+    pub fn new(capacity: usize) -> Self {
+        ReplayBuffer {
+            capacity,
+            transitions: Vec::with_capacity(capacity),
+        }
     }
-    // fn push(&mut self, transition: )
-    // fn sample(&self, batch_size: usize) -> ...
+
+    pub fn push(&mut self, transition: Transition) {
+        self.transitions.push(transition);
+    }
+
+    pub fn sample(&self, batch_size: usize) -> Vec<&Transition> {
+        self.transitions
+            .sample(&mut rand::rng(), batch_size)
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.transitions.len()
+    }
+}
+
+struct Transition {
+    state: Tensor,
+    action: usize,
+    reward: f32,
+    next_state: Tensor,
+    done: bool,
+}
+
+impl Transition {
+    pub fn new(
+        state: &Tensor,
+        action: usize,
+        reward: f32,
+        next_state: &Tensor,
+        done: bool,
+    ) -> Self {
+        Transition {
+            state: state.clone(out),
+            action,
+            reward,
+            next_state: next_state.clone(out),
+            done,
+        }
+    }
 }
