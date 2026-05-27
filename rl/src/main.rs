@@ -1,12 +1,14 @@
+use std::iter::MapWhile;
+
 use rand::seq::IndexedRandom;
 use rubiks::{CUBE_SIZE, Cube};
 use tch::{
-    Device, Tensor,
+    Device, TchError, Tensor,
     nn::{self, Module, OptimizerConfig},
 };
 
 const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
-const OUTPUT_SIZE: usize = 4 * 3;
+const OUTPUT_SIZE: usize = 6 * 3;
 
 fn main() {
     // let cube = Cube::default();
@@ -14,7 +16,7 @@ fn main() {
     train();
 }
 
-fn train() {
+fn train() -> Result<(), TchError> {
     // Define hyperparameters
     let episodes = 1;
     let batch_size = 16;
@@ -22,7 +24,6 @@ fn train() {
     let epsilon_start = 0.9;
     let epsilon_end = 0.01;
     let epsilon_decay = 2500;
-    let tau = 0.005;
     let learning_rate = 1e-3;
     let gamma = 0.99;
     let max_steps = 40;
@@ -34,7 +35,7 @@ fn train() {
     let target_vs_root = target_vs.root();
     let policy_network = initialize_network(&policy_vs_root);
     let target_network = initialize_network(&target_vs_root);
-    let mut opt = nn::Adam::default().build(&target_vs, learning_rate);
+    let mut opt = nn::Adam::default().build(&policy_vs, learning_rate)?;
 
     // Setup environment
     let mut cube_env = CubeEnv::new();
@@ -42,15 +43,16 @@ fn train() {
     let mut steps = 0;
 
     // Train loop
-    for episode in 0..episodes {
+    for _episode in 0..episodes {
         // 1. Encode current state
         let mut state = cube_env.reset();
 
-        // Epsilon with exponential decay
-        let epsilon = epsilon_end
-            + (epsilon_start - epsilon_end) * f32::exp(-1. * steps as f32 / epsilon_decay as f32);
-
         for _ in 0..max_steps {
+            // Epsilon with exponential decay
+            let epsilon = epsilon_end
+                + (epsilon_start - epsilon_end) * f32::exp(-(steps as f32) / epsilon_decay as f32);
+            steps += 1;
+
             // 2. ε-greedy action selection
             let action = if rand::random::<f32>() < epsilon {
                 // with prob ε: random action
@@ -72,7 +74,51 @@ fn train() {
             state = next_state;
 
             // 5. If buffer large enough:
-            todo!()
+            if (replay_buffer.len() >= batch_size) {
+                let batch = replay_buffer.sample(batch_size);
+
+                // Stack into tensors
+                let states = Tensor::stack(
+                    &batch
+                        .iter()
+                        .map(|t| t.state.shallow_clone())
+                        .collect::<Vec<_>>(),
+                    0,
+                ); // [batch, 324]
+                let next_states = Tensor::stack(
+                    &batch
+                        .iter()
+                        .map(|t| t.next_state.shallow_clone())
+                        .collect::<Vec<_>>(),
+                    0,
+                ); // [batch, 324]
+                let actions =
+                    Tensor::from_slice(&batch.iter().map(|t| t.action as i64).collect::<Vec<_>>()); // [batch]
+                let rewards =
+                    Tensor::from_slice(&batch.iter().map(|t| t.reward).collect::<Vec<_>>()); // [batch]
+                let dones = Tensor::from_slice(
+                    &batch
+                        .iter()
+                        .map(|t| if t.done { 1f32 } else { 0f32 })
+                        .collect::<Vec<_>>(),
+                ); // [batch]
+
+                // Q(s, a) from policy network -> gather the Q-value for each action taken
+                let q_values = policy_network
+                    .forward(&states)
+                    .gather(1, &actions.unsqueeze(1), false)
+                    .squeeze_dim(1); // [batch]
+
+                // Bellman targets from target network
+                let next_q_values = tch::no_grad(|| {
+                    target_network.forward(&next_states).max_dim(1, false).0 // [batch]
+                });
+                let targets = &rewards + gamma * &next_q_values * (1. - &dones);
+
+                // MSE loss and backprop
+                let loss = q_values.mse_loss(&targets, tch::Reduction::Mean);
+                opt.backward_step(&loss);
+            }
 
             // a. Sample minibatch
             // b. Compute targets:
@@ -89,9 +135,8 @@ fn train() {
             // 7. Every N steps: copy policy weights → target network
             todo!()
         }
-
-        steps += 1;
     }
+    Result::Ok(())
 }
 
 /// Generates a one-hot encoding for the given cube of dimensions
@@ -203,10 +248,10 @@ impl Transition {
         done: bool,
     ) -> Self {
         Transition {
-            state: state.clone(out),
+            state: state.shallow_clone(),
             action,
             reward,
-            next_state: next_state.clone(out),
+            next_state: next_state.shallow_clone(),
             done,
         }
     }
