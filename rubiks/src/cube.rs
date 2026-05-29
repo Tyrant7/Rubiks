@@ -125,6 +125,11 @@ impl Cube {
         &mut self.faces[face_type as usize]
     }
 
+    /// Returns a reference to the faces of this cube in consistent order.
+    pub fn get_faces(&self) -> &[Face; 6] {
+        &self.faces
+    }
+
     /// Returns true if all faces are solved, i.e. each face is a single colour.
     pub fn is_solved(&self) -> bool {
         self.faces.iter().all(|x| x.is_solved())

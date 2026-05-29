@@ -1,9 +1,13 @@
+use std::time::Instant;
+
 use rand::seq::IndexedRandom;
 use rubiks::{CUBE_SIZE, Cube, FaceType, Turn, TurnType};
 use tch::{
     Device, TchError, Tensor,
     nn::{self, Module, OptimizerConfig},
 };
+
+// TODO: train from checkpoints too
 
 const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
@@ -14,7 +18,7 @@ fn main() {
 
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
-    let episodes = 1;
+    let episodes = 100;
     let batch_size = 16;
     let epsilon_start = 0.9;
     let epsilon_end = 0.01;
@@ -23,8 +27,6 @@ fn train() -> Result<(), TchError> {
     let tau = 0.005;
     let gamma = 0.99;
     let max_steps = 40;
-
-    // TODO: train from checkpoints too
 
     // Initialize models
     let policy_vs = nn::VarStore::new(Device::Cpu);
@@ -40,14 +42,24 @@ fn train() -> Result<(), TchError> {
     let mut replay_buffer = ReplayBuffer::new(10000);
     let mut steps = 0;
 
+    // Initialize logging
+    println!("Beginning training...");
+    let start_time = Instant::now();
+
     // Train loop
-    for _episode in 0..episodes {
+    for episode in 0..episodes {
+        // Logging variables
+        let mut episode_reward = 0.;
+        let mut episode_loss = 0.;
+        let mut loss_steps = 0;
+
         // 1. Encode current state
         let mut state = cube_env.reset();
+        let mut epsilon = epsilon_start;
 
         for _ in 0..max_steps {
             // Epsilon with exponential decay
-            let epsilon = epsilon_end
+            epsilon = epsilon_end
                 + (epsilon_start - epsilon_end) * f32::exp(-(steps as f32) / epsilon_decay as f32);
             steps += 1;
 
@@ -128,6 +140,11 @@ fn train() -> Result<(), TchError> {
                         target_param.copy_(&updated);
                     }
                 });
+
+                // Logging
+                episode_loss += f32::try_from(&loss).expect("bruh");
+                loss_steps += 1;
+                episode_reward += reward;
             }
 
             // 7. If done: reset environment (new scramble)
@@ -136,11 +153,30 @@ fn train() -> Result<(), TchError> {
             }
         }
 
+        // Logging
+        println!(
+            "Episode {:3}/{:3} | reward: {:.2} | loss: {:.4} | epsilon: {:.3}",
+            episode + 1,
+            episodes,
+            episode_reward,
+            if loss_steps > 0 {
+                episode_loss / loss_steps as f32
+            } else {
+                0.
+            },
+            epsilon
+        );
+
         // Save to file
         policy_vs
             .save("policy.ot")
             .expect("Failure to save policy net weights");
     }
+
+    println!(
+        "Finished training in {:.3}ms",
+        (Instant::now() - start_time).as_millis()
+    );
     Result::Ok(())
 }
 
