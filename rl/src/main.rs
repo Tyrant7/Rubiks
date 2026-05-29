@@ -1,5 +1,5 @@
 use rand::seq::IndexedRandom;
-use rubiks::{CUBE_SIZE, Cube};
+use rubiks::{CUBE_SIZE, Cube, FaceType, Turn, TurnType};
 use tch::{
     Device, TchError, Tensor,
     nn::{self, Module, OptimizerConfig},
@@ -9,9 +9,7 @@ const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
 fn main() {
-    // let cube = Cube::default();
-    // let encoding = encode_cube(&cube);
-    train();
+    let _ = train();
 }
 
 fn train() -> Result<(), TchError> {
@@ -36,7 +34,7 @@ fn train() -> Result<(), TchError> {
     let mut opt = nn::Adam::default().build(&policy_vs, learning_rate)?;
 
     // Setup environment
-    let mut cube_env = CubeEnv::new();
+    let mut cube_env = CubeEnv::new(max_steps);
     let mut replay_buffer = ReplayBuffer::new(10000);
     let mut steps = 0;
 
@@ -72,7 +70,7 @@ fn train() -> Result<(), TchError> {
             state = next_state;
 
             // 5. If buffer large enough:
-            if (replay_buffer.len() >= batch_size) {
+            if replay_buffer.len() >= batch_size {
                 let batch = replay_buffer.sample(batch_size);
 
                 // Stack into tensors
@@ -116,24 +114,24 @@ fn train() -> Result<(), TchError> {
                 // MSE loss and backprop
                 let loss = q_values.mse_loss(&targets, tch::Reduction::Mean);
                 opt.backward_step(&loss);
+
+                // 6. Soft update
+                tch::no_grad(|| {
+                    for (target_param, policy_param) in target_vs
+                        .trainable_variables()
+                        .iter_mut()
+                        .zip(policy_vs.trainable_variables().iter())
+                    {
+                        let updated = policy_param * tau + &*target_param * (1. - tau);
+                        target_param.copy_(&updated);
+                    }
+                });
             }
 
-            // 6. If done: reset environment (new scramble)
+            // 7. If done: reset environment (new scramble)
             if done {
                 break;
             }
-
-            // 7. Soft update
-            tch::no_grad(|| {
-                for (target_param, policy_param) in target_vs
-                    .trainable_variables()
-                    .iter_mut()
-                    .zip(policy_vs.trainable_variables().iter())
-                {
-                    let updated = policy_param * tau + &*target_param * (1. - tau);
-                    target_param.copy_(&updated);
-                }
-            });
         }
     }
     Result::Ok(())
@@ -177,29 +175,63 @@ fn initialize_network(vs: &nn::Path) -> impl Module {
         ))
 }
 
-fn calculate_reward(space: &CubeEnv) -> f32 {
+fn calculate_reward(space: &Cube) -> f32 {
     unimplemented!()
 }
 
 struct CubeEnv {
     cube: Cube,
-    max_moves: usize,
+    max_steps: usize,
     steps: usize,
 }
 
 impl CubeEnv {
-    fn new() -> Self {
-        unimplemented!()
+    /// Initializes a new environment with a new unscrambled cube
+    fn new(max_steps: usize) -> Self {
+        CubeEnv {
+            cube: Cube::default(),
+            max_steps,
+            steps: 0,
+        }
     }
 
     /// Scrambles this environment's cube and returns the associated state
     fn reset(&mut self) -> Tensor {
-        unimplemented!()
+        self.cube = Cube::default();
+        self.cube.scramble(20, rubiks::ScrambleType::Random);
+        self.steps = 0;
+        encode_cube(&self.cube)
     }
 
     /// Apply a turn, returns (next_state, reward, done)
     fn step(&mut self, action: usize) -> (Tensor, f32, bool) {
-        unimplemented!()
+        let turn = CubeEnv::map_action(action);
+        self.cube.make_turn(turn);
+        self.steps += 1;
+        (
+            encode_cube(&self.cube),
+            calculate_reward(&self.cube),
+            self.cube.is_solved() || self.steps >= self.max_steps,
+        )
+    }
+
+    /// Maps an action to a turn that can be applied to the cube
+    fn map_action(action: usize) -> Turn {
+        // Since action is in [0, 11], this will allow us to map it to 3 groups of 6
+        let ft = match action / 3 {
+            0 => FaceType::Top,
+            1 => FaceType::Bottom,
+            2 => FaceType::Front,
+            3 => FaceType::Back,
+            4 => FaceType::Left,
+            _ => FaceType::Right,
+        };
+        let tt = match action % 3 {
+            0 => TurnType::Clockwise,
+            1 => TurnType::CounterClockwise,
+            _ => TurnType::Half,
+        };
+        Turn::new(ft, tt)
     }
 }
 
@@ -217,7 +249,13 @@ impl ReplayBuffer {
     }
 
     pub fn push(&mut self, transition: Transition) {
-        self.transitions.push(transition);
+        if self.transitions.len() < self.capacity {
+            self.transitions.push(transition);
+        } else {
+            // Overwrite oldest transitions when the buffer is full
+            let idx = self.transitions.len() % self.capacity;
+            self.transitions[idx] = transition;
+        }
     }
 
     pub fn sample(&self, batch_size: usize) -> Vec<&Transition> {
