@@ -1,5 +1,3 @@
-use std::iter::MapWhile;
-
 use rand::seq::IndexedRandom;
 use rubiks::{CUBE_SIZE, Cube};
 use tch::{
@@ -20,11 +18,11 @@ fn train() -> Result<(), TchError> {
     // Define hyperparameters
     let episodes = 1;
     let batch_size = 16;
-    let update_step = 10;
     let epsilon_start = 0.9;
     let epsilon_end = 0.01;
     let epsilon_decay = 2500;
     let learning_rate = 1e-3;
+    let tau = 0.005;
     let gamma = 0.99;
     let max_steps = 40;
 
@@ -120,20 +118,22 @@ fn train() -> Result<(), TchError> {
                 opt.backward_step(&loss);
             }
 
-            // a. Sample minibatch
-            // b. Compute targets:
-            //  - if done:  target = reward
-            //  - else:     target = reward + γ · max_a Q_target(next_state, a)
-            // c. Compute loss: MSE(Q_policy(state, action), target)
-            // d. Backprop + optimiser step
-
             // 6. If done: reset environment (new scramble)
             if done {
                 break;
             }
 
-            // 7. Every N steps: copy policy weights → target network
-            todo!()
+            // 7. Soft update
+            tch::no_grad(|| {
+                for (target_param, policy_param) in target_vs
+                    .trainable_variables()
+                    .iter_mut()
+                    .zip(policy_vs.trainable_variables().iter())
+                {
+                    let updated = policy_param * tau + &*target_param * (1. - tau);
+                    target_param.copy_(&updated);
+                }
+            });
         }
     }
     Result::Ok(())
