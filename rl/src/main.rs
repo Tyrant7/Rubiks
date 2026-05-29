@@ -24,6 +24,8 @@ fn train() -> Result<(), TchError> {
     let gamma = 0.99;
     let max_steps = 40;
 
+    // TODO: train from checkpoints too
+
     // Initialize models
     let policy_vs = nn::VarStore::new(Device::Cpu);
     let target_vs = nn::VarStore::new(Device::Cpu);
@@ -133,6 +135,11 @@ fn train() -> Result<(), TchError> {
                 break;
             }
         }
+
+        // Save to file
+        policy_vs
+            .save("policy.ot")
+            .expect("Failure to save policy net weights");
     }
     Result::Ok(())
 }
@@ -175,8 +182,8 @@ fn initialize_network(vs: &nn::Path) -> impl Module {
         ))
 }
 
-fn calculate_reward(space: &Cube) -> f32 {
-    unimplemented!()
+fn calculate_reward(cube: &Cube) -> f32 {
+    if cube.is_solved() { 10. } else { 0. }
 }
 
 struct CubeEnv {
