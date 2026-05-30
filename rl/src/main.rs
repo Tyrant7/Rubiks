@@ -22,7 +22,7 @@ fn train() -> Result<(), TchError> {
     let batch_size = 16;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
-    let epsilon_decay = 0.003;
+    let epsilon_decay = 0.002;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
