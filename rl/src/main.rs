@@ -45,6 +45,7 @@ fn train() -> Result<(), TchError> {
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1;
     let mut episodes_since_depth_increase = 0;
+    let mut depth_max_epsilon = epsilon_start;
 
     // Initialize logging
     println!("Beginning training...");
@@ -66,6 +67,7 @@ fn train() -> Result<(), TchError> {
                 scramble_depth = max_scramble;
             }
             episodes_since_depth_increase = 0;
+            depth_max_epsilon = epsilon_start;
         } else {
             episodes_since_depth_increase += 1;
         }
@@ -112,6 +114,8 @@ fn train() -> Result<(), TchError> {
         // Decay epsilon based on current solve rate at the depth we're currently attempting
         let solve_rate = recent_solves as f32 / 100.;
         let epsilon = epsilon_end + (epsilon_start - epsilon_end) * (1.0 - solve_rate.sqrt());
+        let epsilon = epsilon.min(depth_max_epsilon);
+        depth_max_epsilon = epsilon.min(depth_max_epsilon);
 
         for _ in 0..max_steps {
             // 2. ε-greedy action selection
