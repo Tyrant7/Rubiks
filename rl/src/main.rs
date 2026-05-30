@@ -140,7 +140,7 @@ fn train() -> Result<(), TchError> {
                 let targets = &rewards + gamma * &next_q_values * (1. - &dones);
 
                 // MSE loss and backprop
-                let loss = q_values.mse_loss(&targets, tch::Reduction::Mean);
+                let loss = q_values.huber_loss(&targets, tch::Reduction::Mean, 1.0);
                 opt.zero_grad();
                 loss.backward();
                 // Clip gradients to max norm of 1.0
