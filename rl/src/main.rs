@@ -131,7 +131,13 @@ fn train() -> Result<(), TchError> {
 
                 // MSE loss and backprop
                 let loss = q_values.mse_loss(&targets, tch::Reduction::Mean);
-                opt.backward_step(&loss);
+                opt.zero_grad();
+                loss.backward();
+                // Clip gradients to max norm of 1.0
+                policy_vs.trainable_variables().iter().for_each(|v| {
+                    let _ = v.grad().clamp_(-1.0, 1.0);
+                });
+                opt.step();
 
                 // 6. Soft update
                 tch::no_grad(|| {
