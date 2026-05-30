@@ -49,8 +49,8 @@ fn train() -> Result<(), TchError> {
 
     let mut best_solve_rate = 0.0f32;
     let mut episodes_without_improvement = 0;
-    let stagnation_threshold = 250; // episodes without improvement before nudging
-    let exploration_burst = 0.4f32; // how much to add to epsilon on stagnation
+    let stagnation_threshold = 400; // episodes without improvement before nudging
+    let exploration_burst = 0.3f32; // how much to add to epsilon on stagnation
     let mut epsilon = epsilon_start;
 
     // Initialize logging
