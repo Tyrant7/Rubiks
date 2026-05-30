@@ -18,7 +18,7 @@ fn main() {
 
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
-    let episodes = 5000;
+    let episodes = 10000;
     let batch_size = 64;
     let buffer_size = 50000;
     let epsilon_start = 0.9;
@@ -183,7 +183,7 @@ fn train() -> Result<(), TchError> {
 
         // Logging
         println!(
-            "Episode {:4}/{:4} | scramble depth: {:1} | solves: {:2}% | reward: {:6.2} | loss: {:7.4} | epsilon: {:.3}",
+            "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | loss: {:7.4} | epsilon: {:.3}",
             episode + 1,
             episodes,
             scramble_depth,
