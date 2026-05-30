@@ -89,6 +89,7 @@ fn train() -> Result<(), TchError> {
 
             // 3. Step environment → (next_state, reward, done)
             let (next_state, reward, done) = cube_env.step(action);
+            episode_reward += reward;
 
             // 4. Push transition to replay buffer
             replay_buffer.push(Transition::new(&state, action, reward, &next_state, done));
@@ -163,12 +164,11 @@ fn train() -> Result<(), TchError> {
                 // Logging
                 episode_loss += f32::try_from(&loss).expect("bruh");
                 loss_steps += 1;
-                episode_reward += reward;
-
-                // Update tracking
-                last_100_rewards[last_reward_idx % 100] = reward;
-                last_reward_idx += 1;
             }
+
+            // Update tracking
+            last_100_rewards[last_reward_idx % 100] = episode_reward;
+            last_reward_idx += 1;
 
             // 7. If done: reset environment (new scramble)
             if done {
