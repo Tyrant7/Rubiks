@@ -26,7 +26,7 @@ fn train() -> Result<(), TchError> {
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
-    let max_steps = 40;
+    let max_max_steps = 40;
     let max_scramble = 20;
 
     // Initialize models
@@ -73,6 +73,9 @@ fn train() -> Result<(), TchError> {
         if epsilon < epsilon_end {
             epsilon = epsilon_end;
         }
+
+        // Determine max steps
+        let max_steps = (scramble_depth * 3).min(10).max(max_max_steps);
 
         for _ in 0..max_steps {
             // 2. ε-greedy action selection
