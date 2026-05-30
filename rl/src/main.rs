@@ -23,7 +23,7 @@ fn train() -> Result<(), TchError> {
     let buffer_size = 50000;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
-    let epsilon_decay = 0.001;
+    let epsilon_decay = 0.0004;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
@@ -43,7 +43,7 @@ fn train() -> Result<(), TchError> {
     // Setup environment
     let mut cube_env = CubeEnv::new();
     let mut replay_buffer = ReplayBuffer::new(buffer_size);
-    let mut last_100_rewards = [0f32; 100];
+    let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1;
     let mut epsilon = epsilon_start;
 
@@ -57,16 +57,17 @@ fn train() -> Result<(), TchError> {
         let mut episode_reward = 0.;
         let mut episode_loss = 0.;
         let mut loss_steps = 0;
+        let mut episode_solve = false;
 
         // 1. Encode fresh environment
-        let recent_solves = last_100_rewards.iter().filter(|&&r| r > 0.).count();
+        let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
         if recent_solves > 90 {
             scramble_depth += 1;
             if scramble_depth > max_scramble {
                 scramble_depth = max_scramble;
             }
             epsilon = epsilon_start * 0.5;
-            last_100_rewards = [0f32; 100];
+            last_100_solves = [false; 100];
         }
         let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
         let mut state = cube_env.reset(scramble_depth, max_steps);
@@ -92,6 +93,9 @@ fn train() -> Result<(), TchError> {
             // 3. Step environment → (next_state, reward, done)
             let (next_state, reward, done) = cube_env.step(action);
             episode_reward += reward;
+            if cube_env.cube.is_solved() {
+                episode_solve = true;
+            }
 
             // 4. Push transition to replay buffer
             replay_buffer.push(Transition::new(&state, action, reward, &next_state, done));
@@ -142,7 +146,7 @@ fn train() -> Result<(), TchError> {
                 let targets = &rewards + gamma * &next_q_values * (1. - &dones);
 
                 // MSE loss and backprop
-                let loss = q_values.huber_loss(&targets, tch::Reduction::Mean, 1.0);
+                let loss = q_values.huber_loss(&targets, tch::Reduction::Mean, 0.5);
                 opt.zero_grad();
                 loss.backward();
                 // Clip gradients to max norm of 1.0
@@ -175,11 +179,11 @@ fn train() -> Result<(), TchError> {
         }
 
         // Update tracking
-        last_100_rewards[episode % 100] = episode_reward;
+        last_100_solves[episode % 100] = episode_solve;
 
         // Logging
         println!(
-            "Episode {:3}/{:3} | scramble depth: {:1} | solves: {:2}% | reward: {:5.2} | loss: {:7.4} | epsilon: {:.3}",
+            "Episode {:4}/{:4} | scramble depth: {:1} | solves: {:2}% | reward: {:6.2} | loss: {:7.4} | epsilon: {:.3}",
             episode + 1,
             episodes,
             scramble_depth,
@@ -247,7 +251,33 @@ fn initialize_network(vs: &nn::Path) -> impl Module {
 }
 
 fn calculate_reward(cube: &Cube) -> f32 {
-    if cube.is_solved() { 100. } else { -0.1 }
+    if cube.is_solved() {
+        return 1.0;
+    }
+
+    let faces = [
+        FaceType::Top,
+        FaceType::Bottom,
+        FaceType::Front,
+        FaceType::Back,
+        FaceType::Left,
+        FaceType::Right,
+    ];
+
+    let correct_tiles: f32 = faces
+        .iter()
+        .map(|&ft| {
+            let face = cube.get_face(ft);
+            let solved_colour = ft.get_solved_colour();
+            (0..CUBE_SIZE)
+                .flat_map(|r| (0..CUBE_SIZE).map(move |c| (r, c)))
+                .filter(|&(r, c)| face.get_tile_colour(r, c) == solved_colour)
+                .count() as f32
+        })
+        .sum();
+
+    // Normalised to [-1, 1] range roughly
+    (correct_tiles / 54.0) * 0.1 - 0.1
 }
 
 struct CubeEnv {
