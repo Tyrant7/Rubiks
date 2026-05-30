@@ -247,7 +247,7 @@ fn initialize_network(vs: &nn::Path) -> impl Module {
 }
 
 fn calculate_reward(cube: &Cube) -> f32 {
-    if cube.is_solved() { 10. } else { 0. }
+    if cube.is_solved() { 100. } else { -0.1 }
 }
 
 struct CubeEnv {
