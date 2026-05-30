@@ -22,13 +22,12 @@ fn train() -> Result<(), TchError> {
     let batch_size = 16;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
-    let epsilon_decay = 5000;
+    let epsilon_decay = 0.003;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
     let max_steps = 40;
     let max_scramble = 20;
-    let scramble_increment = 250;
 
     // Initialize models
     let policy_vs = nn::VarStore::new(Device::Cpu);
@@ -42,7 +41,10 @@ fn train() -> Result<(), TchError> {
     // Setup environment
     let mut cube_env = CubeEnv::new(max_steps);
     let mut replay_buffer = ReplayBuffer::new(10000);
-    let mut steps = 0;
+    let mut last_100_rewards = [0f32; 100];
+    let mut last_reward_idx = 0;
+    let mut scramble_depth = 1;
+    let mut epsilon = epsilon_start;
 
     // Initialize logging
     println!("Beginning training...");
@@ -56,17 +58,24 @@ fn train() -> Result<(), TchError> {
         let mut loss_steps = 0;
 
         // 1. Encode fresh environment
-        // Increase scramble depth every N episodes
-        let scramble_depth = (episode / scramble_increment + 1).min(max_scramble);
+        let recent_solves = last_100_rewards.iter().filter(|&&r| r > 0.).count();
+        if recent_solves > 90 {
+            scramble_depth += 1;
+            if scramble_depth > max_scramble {
+                scramble_depth = max_scramble;
+            }
+            epsilon = epsilon_start * 0.5;
+            last_100_rewards = [0f32; 100];
+        }
         let mut state = cube_env.reset(scramble_depth);
-        let mut epsilon = epsilon_start;
+
+        // Epsilon with linear decay
+        epsilon -= epsilon_decay;
+        if epsilon < epsilon_end {
+            epsilon = epsilon_end;
+        }
 
         for _ in 0..max_steps {
-            // Epsilon with exponential decay
-            epsilon = epsilon_end
-                + (epsilon_start - epsilon_end) * f32::exp(-(steps as f32) / epsilon_decay as f32);
-            steps += 1;
-
             // 2. ε-greedy action selection
             let action = if rand::random::<f32>() < epsilon {
                 // with prob ε: random action
@@ -155,6 +164,10 @@ fn train() -> Result<(), TchError> {
                 episode_loss += f32::try_from(&loss).expect("bruh");
                 loss_steps += 1;
                 episode_reward += reward;
+
+                // Update tracking
+                last_100_rewards[last_reward_idx % 100] = reward;
+                last_reward_idx += 1;
             }
 
             // 7. If done: reset environment (new scramble)
@@ -165,9 +178,10 @@ fn train() -> Result<(), TchError> {
 
         // Logging
         println!(
-            "Episode {:3}/{:3} | reward: {:.2} | loss: {:.4} | epsilon: {:.3}",
+            "Episode {:3}/{:3} | scramble depth: {:1} | reward: {:.2} | loss: {:.4} | epsilon: {:.3}",
             episode + 1,
             episodes,
+            scramble_depth,
             episode_reward,
             if loss_steps > 0 {
                 episode_loss / loss_steps as f32
