@@ -18,7 +18,7 @@ fn main() {
 
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
-    let episodes = 1000;
+    let episodes = 5000;
     let batch_size = 64;
     let buffer_size = 50000;
     let epsilon_start = 0.9;
@@ -28,7 +28,7 @@ fn train() -> Result<(), TchError> {
     let tau = 0.005;
     let gamma = 0.99;
     let max_max_steps = 40;
-    let min_steps = 5;
+    let min_steps = 3;
     let max_scramble = 20;
 
     // Initialize models
@@ -68,7 +68,7 @@ fn train() -> Result<(), TchError> {
             epsilon = epsilon_start * 0.5;
             last_100_rewards = [0f32; 100];
         }
-        let max_steps = (scramble_depth * 3).min(min_steps).max(max_max_steps);
+        let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
         let mut state = cube_env.reset(scramble_depth, max_steps);
 
         // Epsilon with linear decay
