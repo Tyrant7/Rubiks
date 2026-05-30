@@ -22,7 +22,7 @@ fn train() -> Result<(), TchError> {
     let batch_size = 16;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
-    let epsilon_decay = 0.002;
+    let epsilon_decay = 0.003;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
@@ -59,6 +59,7 @@ fn train() -> Result<(), TchError> {
 
         // 1. Encode fresh environment
         let recent_solves = last_100_rewards.iter().filter(|&&r| r > 0.).count();
+        println!("{}", recent_solves);
         if recent_solves > 90 {
             scramble_depth += 1;
             if scramble_depth > max_scramble {
@@ -166,15 +167,15 @@ fn train() -> Result<(), TchError> {
                 loss_steps += 1;
             }
 
-            // Update tracking
-            last_100_rewards[last_reward_idx % 100] = episode_reward;
-            last_reward_idx += 1;
-
             // 7. If done: reset environment (new scramble)
             if done {
                 break;
             }
         }
+
+        // Update tracking
+        last_100_rewards[last_reward_idx % 100] = episode_reward;
+        last_reward_idx += 1;
 
         // Logging
         println!(
