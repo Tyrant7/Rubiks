@@ -191,9 +191,11 @@ fn train() -> Result<(), TchError> {
         );
 
         // Save to file
-        policy_vs
-            .save("policy.ot")
-            .expect("Failure to save policy net weights");
+        if episode % 100 == 0 {
+            policy_vs
+                .save("policy.ot")
+                .expect("Failed to save policy net weights");
+        }
     }
 
     println!(
