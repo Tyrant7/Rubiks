@@ -58,7 +58,6 @@ fn train() -> Result<(), TchError> {
 
         // 1. Encode fresh environment
         let recent_solves = last_100_rewards.iter().filter(|&&r| r > 0.).count();
-        println!("{}", recent_solves);
         if recent_solves > 90 {
             scramble_depth += 1;
             if scramble_depth > max_scramble {
@@ -177,10 +176,11 @@ fn train() -> Result<(), TchError> {
 
         // Logging
         println!(
-            "Episode {:3}/{:3} | scramble depth: {:1} | reward: {:2.2} | loss: {:2.4} | epsilon: {:.3}",
+            "Episode {:3}/{:3} | scramble depth: {:1} | solves: {:2}% | reward: {:5.2} | loss: {:7.4} | epsilon: {:.3}",
             episode + 1,
             episodes,
             scramble_depth,
+            recent_solves,
             episode_reward,
             if loss_steps > 0 {
                 episode_loss / loss_steps as f32
