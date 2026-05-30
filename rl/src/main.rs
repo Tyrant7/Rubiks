@@ -22,7 +22,7 @@ fn train() -> Result<(), TchError> {
     let batch_size = 16;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
-    let epsilon_decay = 0.003;
+    let epsilon_decay = 0.002;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
@@ -42,7 +42,6 @@ fn train() -> Result<(), TchError> {
     let mut cube_env = CubeEnv::new(max_steps);
     let mut replay_buffer = ReplayBuffer::new(10000);
     let mut last_100_rewards = [0f32; 100];
-    let mut last_reward_idx = 0;
     let mut scramble_depth = 1;
     let mut epsilon = epsilon_start;
 
@@ -174,12 +173,11 @@ fn train() -> Result<(), TchError> {
         }
 
         // Update tracking
-        last_100_rewards[last_reward_idx % 100] = episode_reward;
-        last_reward_idx += 1;
+        last_100_rewards[episode % 100] = episode_reward;
 
         // Logging
         println!(
-            "Episode {:3}/{:3} | scramble depth: {:1} | reward: {:.2} | loss: {:.4} | epsilon: {:.3}",
+            "Episode {:3}/{:3} | scramble depth: {:1} | reward: {:2.2} | loss: {:2.4} | epsilon: {:.3}",
             episode + 1,
             episodes,
             scramble_depth,
