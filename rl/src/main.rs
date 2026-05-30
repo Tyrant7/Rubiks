@@ -19,7 +19,8 @@ fn main() {
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
     let episodes = 1000;
-    let batch_size = 16;
+    let batch_size = 64;
+    let buffer_size = 50000;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
     let epsilon_decay = 0.001;
@@ -41,7 +42,7 @@ fn train() -> Result<(), TchError> {
 
     // Setup environment
     let mut cube_env = CubeEnv::new();
-    let mut replay_buffer = ReplayBuffer::new(10000);
+    let mut replay_buffer = ReplayBuffer::new(buffer_size);
     let mut last_100_rewards = [0f32; 100];
     let mut scramble_depth = 1;
     let mut epsilon = epsilon_start;
