@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use rand::seq::IndexedRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 use rubiks::{CUBE_SIZE, Cube, FaceType, Turn, TurnType};
 use tch::{
     Device, TchError, Tensor,
@@ -23,7 +23,6 @@ fn train() -> Result<(), TchError> {
     let buffer_size = 50000;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
-    let epsilon_decay = 0.0004;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
@@ -45,7 +44,7 @@ fn train() -> Result<(), TchError> {
     let mut replay_buffer = ReplayBuffer::new(buffer_size);
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1;
-    let mut epsilon = epsilon_start;
+    let mut episodes_since_depth_increase = 0;
 
     // Initialize logging
     println!("Beginning training...");
@@ -66,17 +65,53 @@ fn train() -> Result<(), TchError> {
             if scramble_depth > max_scramble {
                 scramble_depth = max_scramble;
             }
-            epsilon = epsilon_start * 0.5;
-            last_100_solves = [false; 100];
+            episodes_since_depth_increase = 0;
+        } else {
+            episodes_since_depth_increase += 1;
         }
         let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
         let mut state = cube_env.reset(scramble_depth, max_steps);
 
-        // Epsilon with linear decay
-        epsilon -= epsilon_decay;
-        if epsilon < epsilon_end {
-            epsilon = epsilon_end;
+        // Seed solve buffer based on greedy solves
+        if episodes_since_depth_increase == 0 {
+            // Run N greedy episodes to assess baseline performance at new depth
+            let eval_episodes = 100;
+            let mut greedy_solves = 0;
+            for _ in 0..eval_episodes {
+                let mut s = cube_env.reset(scramble_depth, max_steps);
+                for _ in 0..max_steps {
+                    let q = policy_network.forward(&s.unsqueeze(0));
+                    let a = q.argmax(1, false).int64_value(&[0]) as usize;
+                    let (next_s, _, done) = cube_env.step(a);
+                    s = next_s;
+                    if done {
+                        if cube_env.cube.is_solved() {
+                            greedy_solves += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+            let greedy_solve_rate = greedy_solves as f32 / eval_episodes as f32;
+            println!(
+                "Greedy baseline at depth {}: {:.0}%",
+                scramble_depth,
+                greedy_solve_rate * 100.0
+            );
+
+            // Randomly order the seeded solves to avoid overwriting them in order
+            let seeded_solves = (greedy_solve_rate * 100.0) as usize;
+            last_100_solves = [false; 100];
+            let mut indices: Vec<usize> = (0..100).collect();
+            indices.shuffle(&mut rand::rng());
+            for i in 0..seeded_solves.min(100) {
+                last_100_solves[indices[i]] = true;
+            }
         }
+
+        // Decay epsilon based on current solve rate at the depth we're currently attempting
+        let solve_rate = recent_solves as f32 / 100.;
+        let epsilon = epsilon_end + (epsilon_start - epsilon_end) * (1.0 - solve_rate.sqrt());
 
         for _ in 0..max_steps {
             // 2. ε-greedy action selection
