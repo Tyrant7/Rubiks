@@ -18,15 +18,17 @@ fn main() {
 
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
-    let episodes = 100;
+    let episodes = 1000;
     let batch_size = 16;
     let epsilon_start = 0.9;
-    let epsilon_end = 0.01;
-    let epsilon_decay = 2500;
+    let epsilon_end = 0.05;
+    let epsilon_decay = 5000;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
     let max_steps = 40;
+    let max_scramble = 20;
+    let scramble_increment = 250;
 
     // Initialize models
     let policy_vs = nn::VarStore::new(Device::Cpu);
@@ -53,8 +55,10 @@ fn train() -> Result<(), TchError> {
         let mut episode_loss = 0.;
         let mut loss_steps = 0;
 
-        // 1. Encode current state
-        let mut state = cube_env.reset();
+        // 1. Encode fresh environment
+        // Increase scramble depth every N episodes
+        let scramble_depth = (episode / scramble_increment + 1).min(max_scramble);
+        let mut state = cube_env.reset(scramble_depth);
         let mut epsilon = epsilon_start;
 
         for _ in 0..max_steps {
@@ -239,9 +243,9 @@ impl CubeEnv {
     }
 
     /// Scrambles this environment's cube and returns the associated state
-    fn reset(&mut self) -> Tensor {
+    fn reset(&mut self, moves: usize) -> Tensor {
         self.cube = Cube::default();
-        self.cube.scramble(20, rubiks::ScrambleType::Random);
+        self.cube.scramble(moves, rubiks::ScrambleType::Random);
         self.steps = 0;
         encode_cube(&self.cube)
     }
