@@ -23,6 +23,7 @@ fn train() -> Result<(), TchError> {
     let buffer_size = 50000;
     let epsilon_start = 0.9;
     let epsilon_end = 0.05;
+    let epsilon_decay = 0.997;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
@@ -45,7 +46,12 @@ fn train() -> Result<(), TchError> {
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1;
     let mut episodes_since_depth_increase = 0;
-    let mut depth_max_epsilon = epsilon_start;
+
+    let mut best_solve_rate = 0.0f32;
+    let mut episodes_without_improvement = 0;
+    let stagnation_threshold = 250; // episodes without improvement before nudging
+    let exploration_burst = 0.4f32; // how much to add to epsilon on stagnation
+    let mut epsilon = epsilon_start;
 
     // Initialize logging
     println!("Beginning training...");
@@ -66,8 +72,9 @@ fn train() -> Result<(), TchError> {
             if scramble_depth > max_scramble {
                 scramble_depth = max_scramble;
             }
+            best_solve_rate = 0.0;
+            episodes_without_improvement = 0;
             episodes_since_depth_increase = 0;
-            depth_max_epsilon = epsilon_start;
         } else {
             episodes_since_depth_increase += 1;
         }
@@ -113,9 +120,27 @@ fn train() -> Result<(), TchError> {
 
         // Decay epsilon based on current solve rate at the depth we're currently attempting
         let solve_rate = recent_solves as f32 / 100.;
-        let epsilon = epsilon_end + (epsilon_start - epsilon_end) * (1.0 - solve_rate.sqrt());
-        let epsilon = epsilon.min(depth_max_epsilon);
-        depth_max_epsilon = epsilon.min(depth_max_epsilon);
+
+        // Stagnation bonus to epsilon -> if too long without improvement, inject additional exploration
+        if solve_rate > best_solve_rate + 0.02 {
+            // Meaningful improvement, update baseline
+            best_solve_rate = solve_rate;
+            episodes_without_improvement = 0;
+        } else {
+            episodes_without_improvement += 1;
+        }
+
+        // Temporarily boost epsilon if stagnating
+        let stagnation_bonus = if episodes_without_improvement > stagnation_threshold {
+            episodes_without_improvement = 0;
+            exploration_burst * (1.0 - solve_rate) // larger boost when solve rate is lower
+        } else {
+            0.0
+        };
+
+        epsilon *= epsilon_decay;
+        epsilon += stagnation_bonus;
+        epsilon = epsilon.clamp(epsilon_end, epsilon_start);
 
         for _ in 0..max_steps {
             // 2. ε-greedy action selection
