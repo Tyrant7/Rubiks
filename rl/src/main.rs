@@ -27,6 +27,7 @@ fn train() -> Result<(), TchError> {
     let tau = 0.005;
     let gamma = 0.99;
     let max_max_steps = 40;
+    let min_steps = 5;
     let max_scramble = 20;
 
     // Initialize models
@@ -39,7 +40,7 @@ fn train() -> Result<(), TchError> {
     let mut opt = nn::Adam::default().build(&policy_vs, learning_rate)?;
 
     // Setup environment
-    let mut cube_env = CubeEnv::new(max_steps);
+    let mut cube_env = CubeEnv::new();
     let mut replay_buffer = ReplayBuffer::new(10000);
     let mut last_100_rewards = [0f32; 100];
     let mut scramble_depth = 1;
@@ -66,16 +67,14 @@ fn train() -> Result<(), TchError> {
             epsilon = epsilon_start * 0.5;
             last_100_rewards = [0f32; 100];
         }
-        let mut state = cube_env.reset(scramble_depth);
+        let max_steps = (scramble_depth * 3).min(min_steps).max(max_max_steps);
+        let mut state = cube_env.reset(scramble_depth, max_steps);
 
         // Epsilon with linear decay
         epsilon -= epsilon_decay;
         if epsilon < epsilon_end {
             epsilon = epsilon_end;
         }
-
-        // Determine max steps
-        let max_steps = (scramble_depth * 3).min(10).max(max_max_steps);
 
         for _ in 0..max_steps {
             // 2. ε-greedy action selection
@@ -258,19 +257,20 @@ struct CubeEnv {
 
 impl CubeEnv {
     /// Initializes a new environment with a new unscrambled cube
-    fn new(max_steps: usize) -> Self {
+    fn new() -> Self {
         CubeEnv {
             cube: Cube::default(),
-            max_steps,
+            max_steps: 0,
             steps: 0,
         }
     }
 
     /// Scrambles this environment's cube and returns the associated state
-    fn reset(&mut self, moves: usize) -> Tensor {
+    fn reset(&mut self, moves: usize, max_steps: usize) -> Tensor {
         self.cube = Cube::default();
         self.cube.scramble(moves, rubiks::ScrambleType::Random);
         self.steps = 0;
+        self.max_steps = max_steps;
         encode_cube(&self.cube)
     }
 
