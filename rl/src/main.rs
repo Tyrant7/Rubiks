@@ -18,7 +18,7 @@ fn main() {
 
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
-    let episodes = 10000;
+    let episodes = 20000;
     let batch_size = 64;
     let buffer_size = 50000;
     let epsilon_start = 0.9;
@@ -49,8 +49,10 @@ fn train() -> Result<(), TchError> {
 
     let mut best_solve_rate = 0.0f32;
     let mut episodes_without_improvement = 0;
-    let stagnation_threshold = 400; // episodes without improvement before nudging
     let exploration_burst = 0.3f32; // how much to add to epsilon on stagnation
+    let recovery_episodes =
+        f32::ln((epsilon_start + exploration_burst) / epsilon_end) / f32::ln(1.0 / epsilon_decay);
+    let stagnation_threshold = recovery_episodes as usize + 100; // episodes without improvement before nudging
     let mut epsilon = epsilon_start;
 
     // Initialize logging
@@ -133,7 +135,7 @@ fn train() -> Result<(), TchError> {
         // Temporarily boost epsilon if stagnating
         let stagnation_bonus = if episodes_without_improvement > stagnation_threshold {
             episodes_without_improvement = 0;
-            exploration_burst * (1.0 - solve_rate) // larger boost when solve rate is lower
+            exploration_burst // * (1.0 - solve_rate) // larger boost when solve rate is lower
         } else {
             0.0
         };
