@@ -10,7 +10,12 @@ use tch::{
 
 use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
-// TODO: train from checkpoints too
+// TODO: train from checkpoints
+// TODO: training log files
+// TODO: charts
+// TODO: double DQN
+// TODO: Run models on GPU
+// TODO: Seeding for reproducibility
 
 const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
@@ -21,17 +26,17 @@ fn main() {
 
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
-    let episodes = 20000;
+    let episodes = 50000;
     let batch_size = 64;
     let buffer_size = 50000;
-    let learning_rate = 3e-4;
+    let learning_rate = 2e-4;
     let tau = 0.002;
     let gamma = 0.99;
-    let mut start_alpha = 0.3;
+    let mut alpha_start = 0.25;
     let alpha_floor = 0.03;
     let alpha_steady_state = 0.064;
     let alpha_decay = 300.;
-    let mut alpha = start_alpha;
+    let mut alpha = alpha_start;
     let max_max_steps = 40;
     let min_steps = 3;
     let max_scramble = 20;
@@ -111,7 +116,7 @@ fn train() -> Result<(), TchError> {
 
             // Give a small boost to alpha a the new depth
             let solve_rate = greedy_solves as f64 / eval_episodes as f64;
-            start_alpha =
+            alpha_start =
                 alpha_floor + (alpha_steady_state - alpha_floor) * (1.0 + (1.0 - solve_rate) * 1.5);
         }
         episodes_at_depth += 1;
@@ -225,7 +230,7 @@ fn train() -> Result<(), TchError> {
 
         // Decay alpha
         alpha = alpha_floor
-            + (start_alpha - alpha_floor) * (-(episodes_at_depth as f64) / alpha_decay).exp();
+            + (alpha_start - alpha_floor) * (-(episodes_at_depth as f64) / alpha_decay).exp();
 
         // Update tracking
         last_100_solves[episodes_at_depth % 100] = episode_solve;
