@@ -3,7 +3,7 @@ use std::time::Instant;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rubiks::{CUBE_SIZE, Cube, FaceType, Turn, TurnType};
 use tch::{
-    Device, TchError, Tensor,
+    Device, Kind, TchError, Tensor,
     nn::{self, Module, OptimizerConfig},
 };
 
@@ -21,12 +21,13 @@ fn train() -> Result<(), TchError> {
     let episodes = 20000;
     let batch_size = 64;
     let buffer_size = 50000;
-    let epsilon_start = 0.9;
-    let epsilon_end = 0.05;
-    let epsilon_decay = 0.997;
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
+    let start_alpha = 0.95;
+    let end_alpha = 0.05;
+    let alpha_decay = 0.995;
+    let mut alpha = start_alpha;
     let max_max_steps = 40;
     let min_steps = 3;
     let max_scramble = 20;
@@ -45,15 +46,6 @@ fn train() -> Result<(), TchError> {
     let mut replay_buffer = ReplayBuffer::new(buffer_size);
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1;
-    let mut episodes_since_depth_increase = 0;
-
-    let mut best_solve_rate = 0.0f32;
-    let mut episodes_without_improvement = 0;
-    let exploration_burst = 0.3f32; // how much to add to epsilon on stagnation
-    let recovery_episodes =
-        f32::ln((epsilon_start + exploration_burst) / epsilon_end) / f32::ln(1.0 / epsilon_decay);
-    let stagnation_threshold = recovery_episodes as usize + 100; // episodes without improvement before nudging
-    let mut epsilon = epsilon_start;
 
     // Initialize logging
     println!("Beginning training...");
@@ -74,20 +66,12 @@ fn train() -> Result<(), TchError> {
             if scramble_depth > max_scramble {
                 scramble_depth = max_scramble;
             }
-            best_solve_rate = 0.0;
-            episodes_without_improvement = 0;
-            episodes_since_depth_increase = 0;
-        } else {
-            episodes_since_depth_increase += 1;
-        }
-        let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
-        let mut state = cube_env.reset(scramble_depth, max_steps);
 
-        // Seed solve buffer based on greedy solves
-        if episodes_since_depth_increase == 0 {
-            // Run N greedy episodes to assess baseline performance at new depth
+            // Seed solve buffer based on greedy solves
+            // by running N greedy episodes to assess baseline performance at new depth
             let eval_episodes = 100;
             let mut greedy_solves = 0;
+            let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
             for _ in 0..eval_episodes {
                 let mut s = cube_env.reset(scramble_depth, max_steps);
                 for _ in 0..max_steps {
@@ -120,41 +104,17 @@ fn train() -> Result<(), TchError> {
             }
         }
 
-        // Decay epsilon based on current solve rate at the depth we're currently attempting
-        let solve_rate = recent_solves as f32 / 100.;
-
-        // Stagnation bonus to epsilon -> if too long without improvement, inject additional exploration
-        if solve_rate > best_solve_rate + 0.02 {
-            // Meaningful improvement, update baseline
-            best_solve_rate = solve_rate;
-            episodes_without_improvement = 0;
-        } else {
-            episodes_without_improvement += 1;
-        }
-
-        // Temporarily boost epsilon if stagnating
-        let stagnation_bonus = if episodes_without_improvement > stagnation_threshold {
-            episodes_without_improvement = 0;
-            exploration_burst // * (1.0 - solve_rate) // larger boost when solve rate is lower
-        } else {
-            0.0
-        };
-
-        epsilon *= epsilon_decay;
-        epsilon += stagnation_bonus;
-        epsilon = epsilon.clamp(epsilon_end, epsilon_start);
+        let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
+        let mut state = cube_env.reset(scramble_depth, max_steps);
 
         for _ in 0..max_steps {
-            // 2. ε-greedy action selection
-            let action = if rand::random::<f32>() < epsilon {
-                // with prob ε: random action
-                rand::random_range(0..OUTPUT_SIZE)
-            } else {
-                // with prob 1-ε: argmax over Q(s, ·)
-                let state_batch = state.unsqueeze(0); // [324] -> [1, 324]
-                let q_values = policy_network.forward(&state_batch);
-                q_values.argmax(1, false).int64_value(&[0]) as usize
-            };
+            // 2. Action selection using soft Q learning
+            let state_batch = state.unsqueeze(0); // [324] -> [1, 324]
+            let q_values = policy_network.forward(&state_batch);
+            let v_values = alpha * (&q_values / alpha).exp().sum(Kind::Float).log();
+            let dist = ((&q_values - v_values) / alpha).exp();
+            let action_probs = &dist / dist.sum(Kind::Float);
+            let action = action_probs.multinomial(1, true).int64_value(&[0]) as usize;
 
             // 3. Step environment → (next_state, reward, done)
             let (next_state, reward, done) = cube_env.step(action);
@@ -207,7 +167,14 @@ fn train() -> Result<(), TchError> {
 
                 // Bellman targets from target network
                 let next_q_values = tch::no_grad(|| {
-                    target_network.forward(&next_states).max_dim(1, false).0 // [batch]
+                    let next_q = target_network.forward(&next_states); // [batch, 18]
+                    let scaled = &next_q / alpha;
+                    let max_q = scaled.max_dim(1, true).0; // [batch, 1] for numerical stability
+                    let stable = (scaled - &max_q)
+                        .exp()
+                        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+                        .log();
+                    alpha * (stable + max_q.squeeze_dim(1)) // [batch]
                 });
                 let targets = &rewards + gamma * &next_q_values * (1. - &dones);
 
@@ -244,12 +211,15 @@ fn train() -> Result<(), TchError> {
             }
         }
 
+        // Decay alpha
+        alpha = (alpha * alpha_decay).max(end_alpha);
+
         // Update tracking
         last_100_solves[episode % 100] = episode_solve;
 
         // Logging
         println!(
-            "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | loss: {:7.4} | epsilon: {:.3}",
+            "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | loss: {:7.4} | alpha: {:6.3}",
             episode + 1,
             episodes,
             scramble_depth,
@@ -260,7 +230,7 @@ fn train() -> Result<(), TchError> {
             } else {
                 0.
             },
-            epsilon
+            alpha
         );
 
         // Save to file
@@ -302,15 +272,17 @@ fn initialize_network(vs: &nn::Path) -> impl Module {
         .add(nn::linear(
             vs / "layer1",
             INPUT_SIZE as i64,
-            256,
+            512,
             Default::default(),
         ))
         .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer2", 256, 128, Default::default()))
+        .add(nn::linear(vs / "layer2", 512, 512, Default::default()))
+        .add_fn(|xs| xs.relu())
+        .add(nn::linear(vs / "layer3", 512, 256, Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(
-            vs / "layer3",
-            128,
+            vs / "layer4",
+            256,
             OUTPUT_SIZE as i64,
             Default::default(),
         ))
