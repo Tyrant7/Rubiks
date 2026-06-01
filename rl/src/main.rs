@@ -29,7 +29,7 @@ fn train() -> Result<(), TchError> {
     let episodes = 50000;
     let batch_size = 64;
     let buffer_size = 50000;
-    let learning_rate = 2e-4;
+    let learning_rate = 3e-4;
     let tau = 0.002;
     let gamma = 0.99;
     let mut alpha_start = 0.25;
