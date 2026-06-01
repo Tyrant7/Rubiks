@@ -24,11 +24,12 @@ fn train() -> Result<(), TchError> {
     let episodes = 20000;
     let batch_size = 64;
     let buffer_size = 50000;
-    let learning_rate = 1e-3;
-    let tau = 0.005;
+    let learning_rate = 3e-4;
+    let tau = 0.002;
     let gamma = 0.99;
-    let start_alpha = 0.3;
-    let end_alpha = 0.05;
+    let mut start_alpha = 0.3;
+    let alpha_floor = 0.03;
+    let alpha_steady_state = 0.064;
     let alpha_decay = 300.;
     let mut alpha = start_alpha;
     let max_max_steps = 40;
@@ -107,9 +108,13 @@ fn train() -> Result<(), TchError> {
             for i in 0..seeded_solves.min(100) {
                 last_100_solves[indices[i]] = true;
             }
-        } else {
-            episodes_at_depth += 1;
+
+            // Give a small boost to alpha a the new depth
+            let solve_rate = greedy_solves as f64 / eval_episodes as f64;
+            start_alpha =
+                alpha_floor + (alpha_steady_state - alpha_floor) * (1.0 + (1.0 - solve_rate) * 1.5);
         }
+        episodes_at_depth += 1;
 
         let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
         let mut state = cube_env.reset(scramble_depth, max_steps);
@@ -191,7 +196,7 @@ fn train() -> Result<(), TchError> {
                 loss.backward();
                 // Clip gradients to max norm of 1.0
                 policy_vs.trainable_variables().iter().for_each(|v| {
-                    let _ = v.grad().clamp_(-1.0, 1.0);
+                    let _ = v.grad().clamp_(-0.5, 0.5);
                 });
                 opt.step();
 
@@ -219,11 +224,11 @@ fn train() -> Result<(), TchError> {
         }
 
         // Decay alpha
-        alpha = end_alpha
-            + (start_alpha - end_alpha) * f64::exp(-episodes_at_depth as f64 / alpha_decay);
+        alpha = alpha_floor
+            + (start_alpha - alpha_floor) * (-(episodes_at_depth as f64) / alpha_decay).exp();
 
         // Update tracking
-        last_100_solves[episode % 100] = episode_solve;
+        last_100_solves[episodes_at_depth % 100] = episode_solve;
 
         // Logging
         println!(
