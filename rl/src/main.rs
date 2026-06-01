@@ -27,9 +27,9 @@ fn train() -> Result<(), TchError> {
     let learning_rate = 1e-3;
     let tau = 0.005;
     let gamma = 0.99;
-    let start_alpha = 0.95;
+    let start_alpha = 0.3;
     let end_alpha = 0.05;
-    let alpha_decay = 0.995;
+    let alpha_decay = 300.;
     let mut alpha = start_alpha;
     let max_max_steps = 40;
     let min_steps = 3;
@@ -49,6 +49,7 @@ fn train() -> Result<(), TchError> {
     let mut replay_buffer = ReplayBuffer::new(buffer_size);
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1;
+    let mut episodes_at_depth = 0;
 
     // Initialize logging
     println!("Beginning training...");
@@ -66,6 +67,7 @@ fn train() -> Result<(), TchError> {
         let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
         if recent_solves > 90 {
             scramble_depth += 1;
+            episodes_at_depth = 0;
             if scramble_depth > max_scramble {
                 scramble_depth = max_scramble;
             }
@@ -105,6 +107,8 @@ fn train() -> Result<(), TchError> {
             for i in 0..seeded_solves.min(100) {
                 last_100_solves[indices[i]] = true;
             }
+        } else {
+            episodes_at_depth += 1;
         }
 
         let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
@@ -204,7 +208,7 @@ fn train() -> Result<(), TchError> {
                 });
 
                 // Logging
-                episode_loss += f32::try_from(&loss).expect("bruh");
+                episode_loss += f32::try_from(&loss).expect("loss calculation failed");
                 loss_steps += 1;
             }
 
@@ -215,7 +219,8 @@ fn train() -> Result<(), TchError> {
         }
 
         // Decay alpha
-        alpha = (alpha * alpha_decay).max(end_alpha);
+        alpha = end_alpha
+            + (start_alpha - end_alpha) * f64::exp(-episodes_at_depth as f64 / alpha_decay);
 
         // Update tracking
         last_100_solves[episode % 100] = episode_solve;
