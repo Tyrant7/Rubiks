@@ -11,17 +11,19 @@ use tch::{
 use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
 // TODO: train from checkpoints
-// TODO: training log files
-// TODO: charts
+// TODO: charts with Tensorboard
 // TODO: double DQN
-// TODO: Run models on GPU
 // TODO: Seeding for reproducibility
 
 const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
 fn main() {
-    let _ = train();
+    println!("CUDA available: {}", tch::Cuda::is_available());
+    println!("CUDA device count: {}", tch::Cuda::device_count());
+    println!("{:?}", Device::cuda_if_available());
+
+    // let _ = train();
 }
 
 fn train() -> Result<(), TchError> {
