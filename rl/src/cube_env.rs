@@ -2,7 +2,7 @@ use rand::seq::IndexedRandom;
 use rubiks::{CUBE_SIZE, Cube, FaceType, Turn, TurnType};
 use tch::Tensor;
 
-use crate::INPUT_SIZE;
+use crate::{INPUT_SIZE, get_device};
 
 /// Generates a one-hot encoding for the given cube of dimensions
 /// faces * width * height * colour
@@ -20,7 +20,7 @@ fn encode_cube(cube: &Cube) -> Tensor {
         }
     }
 
-    Tensor::from_slice(&data) // shape [324]
+    Tensor::from_slice(&data).to_device(get_device()) // shape [324]
 }
 
 /// Calculates reward for the current cube based on correctly placed

@@ -19,11 +19,11 @@ const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
 fn main() {
-    println!("CUDA available: {}", tch::Cuda::is_available());
-    println!("CUDA device count: {}", tch::Cuda::device_count());
-    println!("{:?}", Device::cuda_if_available());
+    let _ = train();
+}
 
-    // let _ = train();
+pub fn get_device() -> Device {
+    Device::cuda_if_available()
 }
 
 fn train() -> Result<(), TchError> {
@@ -44,8 +44,8 @@ fn train() -> Result<(), TchError> {
     let max_scramble = 20;
 
     // Initialize models
-    let policy_vs = nn::VarStore::new(Device::Cpu);
-    let target_vs = nn::VarStore::new(Device::Cpu);
+    let policy_vs = nn::VarStore::new(get_device());
+    let target_vs = nn::VarStore::new(get_device());
     let policy_vs_root = policy_vs.root();
     let target_vs_root = target_vs.root();
     let policy_network = initialize_network(&policy_vs_root);
@@ -60,7 +60,7 @@ fn train() -> Result<(), TchError> {
     let mut episodes_at_depth = 0;
 
     // Initialize logging
-    println!("Beginning training...");
+    println!("Beginning training on device: {:?}", get_device());
     let start_time = Instant::now();
 
     // Train loop
@@ -116,7 +116,7 @@ fn train() -> Result<(), TchError> {
                 last_100_solves[indices[i]] = true;
             }
 
-            // Give a small boost to alpha a the new depth
+            // Give a small boost to alpha at the new depth
             let solve_rate = greedy_solves as f64 / eval_episodes as f64;
             alpha_start =
                 alpha_floor + (alpha_steady_state - alpha_floor) * (1.0 + (1.0 - solve_rate) * 1.5);
@@ -159,24 +159,29 @@ fn train() -> Result<(), TchError> {
                         .map(|t| t.state.shallow_clone())
                         .collect::<Vec<_>>(),
                     0,
-                ); // [batch, 324]
+                )
+                .to_device(get_device()); // [batch, 324]
                 let next_states = Tensor::stack(
                     &batch
                         .iter()
                         .map(|t| t.next_state.shallow_clone())
                         .collect::<Vec<_>>(),
                     0,
-                ); // [batch, 324]
+                )
+                .to_device(get_device()); // [batch, 324]
                 let actions =
-                    Tensor::from_slice(&batch.iter().map(|t| t.action as i64).collect::<Vec<_>>()); // [batch]
+                    Tensor::from_slice(&batch.iter().map(|t| t.action as i64).collect::<Vec<_>>())
+                        .to_device(get_device()); // [batch]
                 let rewards =
-                    Tensor::from_slice(&batch.iter().map(|t| t.reward).collect::<Vec<_>>()); // [batch]
+                    Tensor::from_slice(&batch.iter().map(|t| t.reward).collect::<Vec<_>>())
+                        .to_device(get_device()); // [batch]
                 let dones = Tensor::from_slice(
                     &batch
                         .iter()
                         .map(|t| if t.done { 1f32 } else { 0f32 })
                         .collect::<Vec<_>>(),
-                ); // [batch]
+                )
+                .to_device(get_device()); // [batch]
 
                 // Q(s, a) from policy network -> gather the Q-value for each action taken
                 let q_values = policy_network
@@ -197,11 +202,11 @@ fn train() -> Result<(), TchError> {
                 });
                 let targets = &rewards + gamma * &next_q_values * (1. - &dones);
 
-                // MSE loss and backprop
+                // Huber loss and backprop
                 let loss = q_values.huber_loss(&targets, tch::Reduction::Mean, 0.5);
                 opt.zero_grad();
                 loss.backward();
-                // Clip gradients to max norm of 1.0
+                // Clip gradients
                 policy_vs.trainable_variables().iter().for_each(|v| {
                     let _ = v.grad().clamp_(-0.5, 0.5);
                 });
