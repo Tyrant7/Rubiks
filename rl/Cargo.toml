@@ -7,3 +7,4 @@ edition = "2024"
 rand = "0.10.1"
 rubiks = { path = "../rubiks" }
 tch = "0.24.0"
+tensorboard-rs = "0.5.9"

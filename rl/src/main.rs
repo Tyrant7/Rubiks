@@ -7,11 +7,12 @@ use tch::{
     Device, Kind, TchError, Tensor,
     nn::{self, Module, OptimizerConfig},
 };
+use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
 // TODO: train from checkpoints
-// TODO: charts with Tensorboard
+// TODO: charts with Tensorboard << next
 // TODO: double DQN
 // TODO: Seeding for reproducibility
 
@@ -62,6 +63,7 @@ fn train() -> Result<(), TchError> {
     // Initialize logging
     println!("Beginning training on device: {:?}", get_device());
     let start_time = Instant::now();
+    let mut writer = SummaryWriter::new("./logs");
 
     // Train loop
     for episode in 0..episodes {
@@ -228,6 +230,12 @@ fn train() -> Result<(), TchError> {
                 episode_loss += f32::try_from(&loss).expect("loss calculation failed");
                 loss_steps += 1;
             }
+
+            // Logging
+            writer.add_scalar("scramble depth", scramble_depth as f32, episode);
+            writer.add_scalar("solve rate", recent_solves as f32, episode);
+            writer.add_scalar("loss", episode_loss as f32, episode);
+            writer.add_scalar("alpha", alpha as f32, episode);
 
             // 7. If done: reset environment (new scramble)
             if done {
