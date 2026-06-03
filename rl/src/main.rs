@@ -12,7 +12,6 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
 // TODO: train from checkpoints
-// TODO: charts with Tensorboard << next
 // TODO: double DQN
 // TODO: Seeding for reproducibility
 
