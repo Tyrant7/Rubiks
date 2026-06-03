@@ -62,7 +62,7 @@ fn train() -> Result<(), TchError> {
     // Initialize logging
     println!("Beginning training on device: {:?}", get_device());
     let start_time = Instant::now();
-    let mut writer = SummaryWriter::new("./logs");
+    let mut writer = SummaryWriter::new("./rl/logs");
 
     // Train loop
     for episode in 0..episodes {
@@ -268,7 +268,7 @@ fn train() -> Result<(), TchError> {
         // Save to file
         if episode % 100 == 0 {
             policy_vs
-                .save("policy.ot")
+                .save("./rl/nets/policy.ot")
                 .expect("Failed to save policy net weights");
         }
     }
