@@ -131,8 +131,9 @@ fn train() -> Result<(), TchError> {
             // 2. Action selection using soft Q learning
             let state_batch = state.unsqueeze(0); // [324] -> [1, 324]
             let q_values = policy_network.forward(&state_batch);
-            let v_values = alpha * (&q_values / alpha).exp().sum(Kind::Float).log();
-            let dist = ((&q_values - v_values) / alpha).exp();
+            let max_q = q_values.max();
+            let shifted = &q_values - &max_q;
+            let dist = (&shifted / alpha).exp();
             let action_probs = &dist / dist.sum(Kind::Float);
             let action = action_probs.multinomial(1, true).int64_value(&[0]) as usize;
 
