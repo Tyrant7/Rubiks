@@ -257,6 +257,78 @@ mod tests {
     }
 
     #[test]
+    fn make_turn_clockwise_2x2() {
+        const CUBE_SIZE: usize = 2;
+        let mut cube = Cube::default();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
+
+        assert_eq!(
+            cube.get_face(FaceType::Front).get_row(1),
+            [FaceType::<CUBE_SIZE>::Left.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Left).get_row(1),
+            [FaceType::<CUBE_SIZE>::Back.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Back).get_row(1),
+            [FaceType::<CUBE_SIZE>::Right.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Right).get_row(1),
+            [FaceType::<CUBE_SIZE>::Front.get_solved_colour(); CUBE_SIZE]
+        );
+    }
+
+    #[test]
+    fn make_turn_counterclockwise_2x2() {
+        const CUBE_SIZE: usize = 2;
+        let mut cube = Cube::default();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
+
+        assert_eq!(
+            cube.get_face(FaceType::Front).get_row(1),
+            [FaceType::<CUBE_SIZE>::Right.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Right).get_row(1),
+            [FaceType::<CUBE_SIZE>::Back.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Back).get_row(1),
+            [FaceType::<CUBE_SIZE>::Left.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Left).get_row(1),
+            [FaceType::<CUBE_SIZE>::Front.get_solved_colour(); CUBE_SIZE]
+        );
+    }
+
+    #[test]
+    fn make_turn_half_2x2() {
+        const CUBE_SIZE: usize = 2;
+        let mut cube = Cube::default();
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Half));
+
+        assert_eq!(
+            cube.get_face(FaceType::Front).get_row(1),
+            [FaceType::<CUBE_SIZE>::Back.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Right).get_row(1),
+            [FaceType::<CUBE_SIZE>::Left.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Back).get_row(1),
+            [FaceType::<CUBE_SIZE>::Front.get_solved_colour(); CUBE_SIZE]
+        );
+        assert_eq!(
+            cube.get_face(FaceType::Left).get_row(1),
+            [FaceType::<CUBE_SIZE>::Right.get_solved_colour(); CUBE_SIZE]
+        );
+    }
+
+    #[test]
     fn make_turns_reversible() {
         let mut cube = Cube::<3>::default();
 

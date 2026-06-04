@@ -13,6 +13,7 @@ const FACE_COLOURS: [Colour; 6] = [
 /// Represents a single face of the cube as a 2D grid of tiles.
 /// Each tile stores a [`Colour`] directly, representing which face
 /// the tile belongs to in the solved state.
+/// Each face is defined with a compile-time size.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct Face<const SIZE: usize> {
     tiles: [[Colour; SIZE]; SIZE],
@@ -277,6 +278,63 @@ mod tests {
         target_face.set_tile_colour(0, 0, Colour::Red);
         target_face.set_tile_colour(2, 1, Colour::White);
         target_face.set_tile_colour(2, 2, Colour::Green);
+
+        assert_eq!(face, target_face);
+    }
+
+    #[test]
+    fn make_turn_clockwise_2x2() {
+        let mut face = Face::<2>::new(Colour::Blue);
+        face.set_tile_colour(0, 0, Colour::Green);
+        face.set_tile_colour(0, 1, Colour::White);
+        // G W
+        // B B
+
+        face.make_turn(TurnType::Clockwise);
+        // B G
+        // B W
+
+        let mut target_face = Face::new(Colour::Blue);
+        target_face.set_tile_colour(0, 1, Colour::Green);
+        target_face.set_tile_colour(1, 1, Colour::White);
+
+        assert_eq!(face, target_face);
+    }
+
+    #[test]
+    fn make_turn_counterclockwise_2x2() {
+        let mut face = Face::<2>::new(Colour::Blue);
+        face.set_tile_colour(0, 0, Colour::Green);
+        face.set_tile_colour(0, 1, Colour::White);
+        // G W
+        // B B
+
+        face.make_turn(TurnType::CounterClockwise);
+        // W B
+        // G B
+
+        let mut target_face = Face::new(Colour::Blue);
+        target_face.set_tile_colour(0, 0, Colour::White);
+        target_face.set_tile_colour(1, 0, Colour::Green);
+
+        assert_eq!(face, target_face);
+    }
+
+    #[test]
+    fn make_half_turn_2x2() {
+        let mut face = Face::<2>::new(Colour::Blue);
+        face.set_tile_colour(0, 0, Colour::Green);
+        face.set_tile_colour(0, 1, Colour::White);
+        // G W
+        // B B
+
+        face.make_turn(TurnType::Half);
+        // B B
+        // W G
+
+        let mut target_face = Face::new(Colour::Blue);
+        target_face.set_tile_colour(1, 0, Colour::White);
+        target_face.set_tile_colour(1, 1, Colour::Green);
 
         assert_eq!(face, target_face);
     }
