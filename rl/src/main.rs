@@ -13,10 +13,9 @@ use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
 // TODO: Train from checkpoints
 // TODO: Seeding for reproducibility
-// TODO: Try training on 2x2 Rubik's cubes
 // TODO: SAC
 
-const CUBE_SIZE: usize = 3;
+const CUBE_SIZE: usize = 2;
 const INPUT_SIZE: usize = 6 * CUBE_SIZE * CUBE_SIZE * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
@@ -62,7 +61,11 @@ fn train() -> Result<(), TchError> {
     let mut episodes_at_depth = 0;
 
     // Initialize logging
-    println!("Beginning training on device: {:?}", get_device());
+    println!(
+        "Beginning training for cube of size: {} on device: {:?}",
+        CUBE_SIZE,
+        get_device()
+    );
     let start_time = Instant::now();
     let mut writer = SummaryWriter::new("./rl/logs");
 
