@@ -34,7 +34,7 @@ fn train() -> Result<(), TchError> {
 
     // Define hyperparameters
     let episodes = 50000;
-    let batch_size = 128;
+    let batch_size = 1024;
     let buffer_size = 50000;
     let learning_rate = 3e-4;
     let tau = 0.005;
@@ -137,8 +137,8 @@ fn train() -> Result<(), TchError> {
         let mut state = cube_env.reset(scramble_depth, max_steps);
 
         for _ in 0..max_steps {
-            // 2. Action selection using soft Q learning
-            let state_batch = state.unsqueeze(0); // [324] -> [1, 324]
+            // Action selection using soft Q learning
+            let state_batch = state.unsqueeze(0); // [INPUT_SIZE] -> [1, INPUT_SIZE]
             let q_values = policy_network.forward(&state_batch);
             let max_q = q_values.max();
             let shifted = &q_values - &max_q;
@@ -171,7 +171,7 @@ fn train() -> Result<(), TchError> {
                         .collect::<Vec<_>>(),
                     0,
                 )
-                .to_device(get_device()); // [batch, 324]
+                .to_device(get_device()); // [batch, INPUT_SIZE]
                 let next_states = Tensor::stack(
                     &batch
                         .iter()
@@ -179,7 +179,7 @@ fn train() -> Result<(), TchError> {
                         .collect::<Vec<_>>(),
                     0,
                 )
-                .to_device(get_device()); // [batch, 324]
+                .to_device(get_device()); // [batch, INPUT_SIZE]
                 let actions =
                     Tensor::from_slice(&batch.iter().map(|t| t.action as i64).collect::<Vec<_>>())
                         .to_device(get_device()); // [batch]
@@ -295,17 +295,17 @@ fn initialize_network(vs: &nn::Path) -> impl Module {
         .add(nn::linear(
             vs / "layer1",
             INPUT_SIZE as i64,
-            512,
+            256,
             Default::default(),
         ))
         .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer2", 512, 512, Default::default()))
+        .add(nn::linear(vs / "layer2", 256, 256, Default::default()))
         .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer3", 512, 256, Default::default()))
+        .add(nn::linear(vs / "layer3", 256, 128, Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(
             vs / "layer4",
-            256,
+            128,
             OUTPUT_SIZE as i64,
             Default::default(),
         ))
