@@ -52,7 +52,8 @@ fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
         .sum();
 
     // Normalised to [-1, 1] range roughly
-    (correct_tiles / 54.0) * 0.1 - 0.1
+    const TILES: usize = CUBE_SIZE * CUBE_SIZE * 6;
+    (correct_tiles / TILES as f32) * 0.1 - 0.1
 }
 
 pub struct CubeEnv {
