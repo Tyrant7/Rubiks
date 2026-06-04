@@ -167,6 +167,13 @@ mod tests {
     }
 
     #[test]
+    fn scramble_not_solved_2x2() {
+        let mut cube = Cube::<2>::default();
+        cube.scramble(30, ScrambleType::Seeded(42));
+        assert!(!cube.is_solved());
+    }
+
+    #[test]
     fn scramble_seeded_deterministic() {
         let mut cube_a = Cube::<3>::default();
         let mut cube_b = Cube::default();
@@ -257,6 +264,15 @@ mod tests {
     }
 
     #[test]
+    fn four_clockwise_returns_to_solved() {
+        let mut cube = Cube::<3>::default();
+        for _ in 0..4 {
+            cube.make_turn(Turn::new(FaceType::Right, TurnType::Clockwise));
+        }
+        assert!(cube.is_solved());
+    }
+
+    #[test]
     fn make_turn_clockwise_2x2() {
         const CUBE_SIZE: usize = 2;
         let mut cube = Cube::default();
@@ -329,8 +345,40 @@ mod tests {
     }
 
     #[test]
+    fn four_clockwise_returns_to_solved_2x2() {
+        let mut cube = Cube::<2>::default();
+        for _ in 0..4 {
+            cube.make_turn(Turn::new(FaceType::Right, TurnType::Clockwise));
+        }
+        assert!(cube.is_solved());
+    }
+
+    #[test]
     fn make_turns_reversible() {
         let mut cube = Cube::<3>::default();
+
+        // Turn in
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Top, TurnType::Clockwise));
+        cube.make_turn(Turn::new(FaceType::Right, TurnType::Half));
+        cube.make_turn(Turn::new(FaceType::Left, TurnType::Clockwise));
+        cube.make_turn(Turn::new(FaceType::Front, TurnType::Clockwise));
+        cube.make_turn(Turn::new(FaceType::Back, TurnType::Half));
+
+        // Turn out
+        cube.make_turn(Turn::new(FaceType::Back, TurnType::Half));
+        cube.make_turn(Turn::new(FaceType::Front, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Left, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Right, TurnType::Half));
+        cube.make_turn(Turn::new(FaceType::Top, TurnType::CounterClockwise));
+        cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
+
+        assert!(cube.is_solved());
+    }
+
+    #[test]
+    fn make_turns_reversible_2x2() {
+        let mut cube = Cube::<2>::default();
 
         // Turn in
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
