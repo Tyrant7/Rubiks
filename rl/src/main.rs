@@ -11,9 +11,9 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
-// TODO: train from checkpoints
-// TODO: double DQN
+// TODO: Train from checkpoints
 // TODO: Seeding for reproducibility
+// TODO: SAC
 
 const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
@@ -29,10 +29,10 @@ pub fn get_device() -> Device {
 fn train() -> Result<(), TchError> {
     // Define hyperparameters
     let episodes = 50000;
-    let batch_size = 64;
+    let batch_size = 128;
     let buffer_size = 50000;
     let learning_rate = 3e-4;
-    let tau = 0.002;
+    let tau = 0.005;
     let gamma = 0.99;
     let mut alpha_start = 0.25;
     let alpha_floor = 0.03;
@@ -190,7 +190,7 @@ fn train() -> Result<(), TchError> {
                     .gather(1, &actions.unsqueeze(1), false)
                     .squeeze_dim(1); // [batch]
 
-                // Bellman targets from target network
+                // Bellman targets using Double-DQN
                 let next_q_values = tch::no_grad(|| {
                     let next_q = target_network.forward(&next_states); // [batch, 18]
                     let scaled = &next_q / alpha;
