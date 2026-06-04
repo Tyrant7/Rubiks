@@ -20,7 +20,7 @@ fn encode_cube(cube: &Cube<CUBE_SIZE>) -> Tensor {
         }
     }
 
-    Tensor::from_slice(&data).to_device(get_device()) // shape [324]
+    Tensor::from_slice(&data).to_device(get_device())
 }
 
 /// Calculates reward for the current cube based on correctly placed
