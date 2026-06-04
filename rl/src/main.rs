@@ -72,7 +72,7 @@ fn train() -> Result<(), TchError> {
         let mut loss_steps = 0;
         let mut episode_solve = false;
 
-        // 1. Encode fresh environment
+        // Encode fresh environment
         let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
         if recent_solves > 90 {
             scramble_depth += 1;
@@ -137,20 +137,20 @@ fn train() -> Result<(), TchError> {
             let action_probs = &dist / dist.sum(Kind::Float);
             let action = action_probs.multinomial(1, true).int64_value(&[0]) as usize;
 
-            // 3. Step environment → (next_state, reward, done)
+            // Step environment -> (next_state, reward, done)
             let (next_state, reward, done) = cube_env.step(action);
             episode_reward += reward;
             if cube_env.get_cube().is_solved() {
                 episode_solve = true;
             }
 
-            // 4. Push transition to replay buffer
+            // Push transition to replay buffer
             replay_buffer.push(Transition::new(&state, action, reward, &next_state, done));
 
             // Move to the next state
             state = next_state;
 
-            // 5. If buffer large enough:
+            // If buffer large enough:
             if replay_buffer.len() >= batch_size {
                 let batch = replay_buffer.sample(batch_size);
 
@@ -214,7 +214,7 @@ fn train() -> Result<(), TchError> {
                 });
                 opt.step();
 
-                // 6. Soft update
+                // Soft updates
                 tch::no_grad(|| {
                     for (target_param, policy_param) in target_vs
                         .trainable_variables()
@@ -237,7 +237,7 @@ fn train() -> Result<(), TchError> {
             writer.add_scalar("loss", episode_loss as f32, episode);
             writer.add_scalar("alpha", alpha as f32, episode);
 
-            // 7. If done: reset environment (new scramble)
+            // If done: reset environment (new scramble)
             if done {
                 break;
             }
