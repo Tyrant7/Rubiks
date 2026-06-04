@@ -9,9 +9,9 @@ use crate::{
 
 /// Represents a Rubik's cube as an array of six [`Face`]s.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Cube {
+pub struct Cube<const SIZE: usize> {
     /// Indexed by [`FaceType`] cast to `usize`.
-    faces: [Face; 6],
+    faces: [Face<SIZE>; 6],
 }
 
 /// Controls how the random number generator is seeded during a scramble.
@@ -23,23 +23,23 @@ pub enum ScrambleType {
     Seeded(u64),
 }
 
-impl Default for Cube {
+impl<const SIZE: usize> Default for Cube<SIZE> {
     /// Creates a new solved cube with each face set to its default colour.
     fn default() -> Self {
         Self {
             faces: [
-                Face::new(FaceType::Top.get_solved_colour()),
-                Face::new(FaceType::Bottom.get_solved_colour()),
-                Face::new(FaceType::Front.get_solved_colour()),
-                Face::new(FaceType::Back.get_solved_colour()),
-                Face::new(FaceType::Left.get_solved_colour()),
-                Face::new(FaceType::Right.get_solved_colour()),
+                Face::new(FaceType::Top::<SIZE>.get_solved_colour()),
+                Face::new(FaceType::Bottom::<SIZE>.get_solved_colour()),
+                Face::new(FaceType::Front::<SIZE>.get_solved_colour()),
+                Face::new(FaceType::Back::<SIZE>.get_solved_colour()),
+                Face::new(FaceType::Left::<SIZE>.get_solved_colour()),
+                Face::new(FaceType::Right::<SIZE>.get_solved_colour()),
             ],
         }
     }
 }
 
-impl Cube {
+impl<const SIZE: usize> Cube<SIZE> {
     /// Scrambles the cube by applying a number of random turns.
     /// Use [`ScrambleType::Seeded`] for a reproducible scramble.
     pub fn scramble(&mut self, moves: usize, scramble_type: ScrambleType) {
@@ -70,13 +70,13 @@ impl Cube {
 
     /// Applies a single turn to the cube, rotating the face and cycling
     /// the edges of all adjacent faces.
-    pub fn make_turn(&mut self, turn: Turn) {
+    pub fn make_turn(&mut self, turn: Turn<SIZE>) {
         self.get_face_mut(turn.face_type).make_turn(turn.turn_type);
         self.cycle_edges(turn);
     }
 
     /// Cycles the edges of the four faces adjacent to the turned face.
-    fn cycle_edges(&mut self, turn: Turn) {
+    fn cycle_edges(&mut self, turn: Turn<SIZE>) {
         let edges = turn.face_type.get_edges();
 
         // Read all 4 edges first
@@ -116,17 +116,17 @@ impl Cube {
     }
 
     /// Returns a reference to the face with the given [`FaceType`].
-    pub fn get_face(&self, face_type: FaceType) -> &Face {
+    pub fn get_face(&self, face_type: FaceType<SIZE>) -> &Face<SIZE> {
         &self.faces[face_type as usize]
     }
 
     /// Returns a mutable reference to the face with the given [`FaceType`].
-    fn get_face_mut(&mut self, face_type: FaceType) -> &mut Face {
+    fn get_face_mut(&mut self, face_type: FaceType<SIZE>) -> &mut Face<SIZE> {
         &mut self.faces[face_type as usize]
     }
 
     /// Returns a reference to the faces of this cube in consistent order.
-    pub fn get_faces(&self) -> &[Face; 6] {
+    pub fn get_faces(&self) -> &[Face<SIZE>; 6] {
         &self.faces
     }
 
@@ -145,13 +145,11 @@ impl Cube {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::face::CUBE_SIZE;
-
     use super::*;
 
     #[test]
     fn new_cube() {
-        let cube = Cube::default();
+        let cube = Cube::<3>::default();
 
         // Ensure all faces are unique
         let mut set = HashSet::new();
@@ -163,14 +161,14 @@ mod tests {
 
     #[test]
     fn scramble_not_solved() {
-        let mut cube = Cube::default();
+        let mut cube = Cube::<3>::default();
         cube.scramble(30, ScrambleType::Seeded(42));
         assert!(!cube.is_solved());
     }
 
     #[test]
     fn scramble_seeded_deterministic() {
-        let mut cube_a = Cube::default();
+        let mut cube_a = Cube::<3>::default();
         let mut cube_b = Cube::default();
         cube_a.scramble(30, ScrambleType::Seeded(20));
         cube_b.scramble(30, ScrambleType::Seeded(20));
@@ -179,7 +177,7 @@ mod tests {
 
     #[test]
     fn scramble_different_seeds_differ() {
-        let mut cube_a = Cube::default();
+        let mut cube_a = Cube::<3>::default();
         let mut cube_b = Cube::default();
         cube_a.scramble(30, ScrambleType::Seeded(50));
         cube_b.scramble(30, ScrambleType::Seeded(51));
@@ -188,76 +186,79 @@ mod tests {
 
     #[test]
     fn make_turn_clockwise() {
+        const CUBE_SIZE: usize = 3;
         let mut cube = Cube::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
 
         assert_eq!(
             cube.get_face(FaceType::Front).get_row(2),
-            [FaceType::Left.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Left.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Left).get_row(2),
-            [FaceType::Back.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Back.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Back).get_row(2),
-            [FaceType::Right.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Right.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Right).get_row(2),
-            [FaceType::Front.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Front.get_solved_colour(); CUBE_SIZE]
         );
     }
 
     #[test]
     fn make_turn_counterclockwise() {
+        const CUBE_SIZE: usize = 3;
         let mut cube = Cube::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
 
         assert_eq!(
             cube.get_face(FaceType::Front).get_row(2),
-            [FaceType::Right.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Right.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Right).get_row(2),
-            [FaceType::Back.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Back.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Back).get_row(2),
-            [FaceType::Left.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Left.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Left).get_row(2),
-            [FaceType::Front.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Front.get_solved_colour(); CUBE_SIZE]
         );
     }
 
     #[test]
     fn make_turn_half() {
+        const CUBE_SIZE: usize = 3;
         let mut cube = Cube::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Half));
 
         assert_eq!(
             cube.get_face(FaceType::Front).get_row(2),
-            [FaceType::Back.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Back.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Right).get_row(2),
-            [FaceType::Left.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Left.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Back).get_row(2),
-            [FaceType::Front.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Front.get_solved_colour(); CUBE_SIZE]
         );
         assert_eq!(
             cube.get_face(FaceType::Left).get_row(2),
-            [FaceType::Right.get_solved_colour(); CUBE_SIZE]
+            [FaceType::<CUBE_SIZE>::Right.get_solved_colour(); CUBE_SIZE]
         );
     }
 
     #[test]
     fn make_turns_reversible() {
-        let mut cube = Cube::default();
+        let mut cube = Cube::<3>::default();
 
         // Turn in
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::CounterClockwise));
@@ -280,13 +281,13 @@ mod tests {
 
     #[test]
     fn is_solved_true() {
-        let cube = Cube::default();
+        let cube = Cube::<3>::default();
         assert!(cube.is_solved());
     }
 
     #[test]
     fn is_solved_false() {
-        let mut cube = Cube::default();
+        let mut cube = Cube::<3>::default();
         cube.get_face_mut(FaceType::Back)
             .set_tile_colour(0, 0, crate::face::Colour::Yellow);
         assert!(!cube.is_solved());
@@ -294,13 +295,13 @@ mod tests {
 
     #[test]
     fn count_solved_all() {
-        let cube = Cube::default();
+        let cube = Cube::<3>::default();
         assert_eq!(cube.count_solved_faces(), 6);
     }
 
     #[test]
     fn count_solved_after_one_move() {
-        let mut cube = Cube::default();
+        let mut cube = Cube::<3>::default();
         cube.make_turn(Turn::new(FaceType::Bottom, TurnType::Clockwise));
         assert_eq!(cube.count_solved_faces(), 2);
     }

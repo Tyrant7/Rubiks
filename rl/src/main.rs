@@ -13,9 +13,11 @@ use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
 // TODO: Train from checkpoints
 // TODO: Seeding for reproducibility
+// TODO: Try training on 2x2 Rubik's cubes
 // TODO: SAC
 
-const INPUT_SIZE: usize = 6 * 3 * 3 * 6;
+const CUBE_SIZE: usize = 3;
+const INPUT_SIZE: usize = 6 * CUBE_SIZE * CUBE_SIZE * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
 fn main() {

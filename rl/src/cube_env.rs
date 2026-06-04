@@ -1,12 +1,12 @@
 use rand::seq::IndexedRandom;
-use rubiks::{CUBE_SIZE, Cube, FaceType, Turn, TurnType};
+use rubiks::{Cube, FaceType, Turn, TurnType};
 use tch::Tensor;
 
-use crate::{INPUT_SIZE, get_device};
+use crate::{CUBE_SIZE, INPUT_SIZE, get_device};
 
 /// Generates a one-hot encoding for the given cube of dimensions
 /// faces * width * height * colour
-fn encode_cube(cube: &Cube) -> Tensor {
+fn encode_cube(cube: &Cube<CUBE_SIZE>) -> Tensor {
     let mut data = Vec::with_capacity(INPUT_SIZE);
 
     for face in cube.get_faces() {
@@ -25,7 +25,7 @@ fn encode_cube(cube: &Cube) -> Tensor {
 
 /// Calculates reward for the current cube based on correctly placed
 /// tile counts and whether or not the cube is solved
-fn calculate_reward(cube: &Cube) -> f32 {
+fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
     if cube.is_solved() {
         return 1.0;
     }
@@ -56,7 +56,7 @@ fn calculate_reward(cube: &Cube) -> f32 {
 }
 
 pub struct CubeEnv {
-    cube: Cube,
+    cube: Cube<CUBE_SIZE>,
     max_steps: usize,
     steps: usize,
 }
@@ -65,7 +65,7 @@ impl CubeEnv {
     /// Initializes a new environment with a new unscrambled cube
     pub fn new() -> Self {
         CubeEnv {
-            cube: Cube::default(),
+            cube: Cube::<CUBE_SIZE>::default(),
             max_steps: 0,
             steps: 0,
         }
@@ -93,7 +93,7 @@ impl CubeEnv {
     }
 
     /// Maps an action to a turn that can be applied to the cube
-    fn map_action(action: usize) -> Turn {
+    fn map_action(action: usize) -> Turn<CUBE_SIZE> {
         // Since action is in [0, 11], this will allow us to map it to 3 groups of 6
         let ft = match action / 3 {
             0 => FaceType::Top,
@@ -112,7 +112,7 @@ impl CubeEnv {
     }
 
     /// Cube getter
-    pub fn get_cube(&self) -> &Cube {
+    pub fn get_cube(&self) -> &Cube<CUBE_SIZE> {
         &self.cube
     }
 }
