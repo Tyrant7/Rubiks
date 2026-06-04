@@ -237,12 +237,6 @@ fn train() -> Result<(), TchError> {
                 loss_steps += 1;
             }
 
-            // Logging
-            writer.add_scalar("scramble depth", scramble_depth as f32, episode);
-            writer.add_scalar("solve rate", recent_solves as f32, episode);
-            writer.add_scalar("loss", episode_loss as f32, episode);
-            writer.add_scalar("alpha", alpha as f32, episode);
-
             // If done: reset environment (new scramble)
             if done {
                 break;
@@ -252,6 +246,12 @@ fn train() -> Result<(), TchError> {
         // Decay alpha
         alpha = alpha_floor
             + (alpha_start - alpha_floor) * (-(episodes_at_depth as f64) / alpha_decay).exp();
+
+        // Logging
+        writer.add_scalar("scramble depth", scramble_depth as f32, episode);
+        writer.add_scalar("solve rate", recent_solves as f32 / 100., episode);
+        writer.add_scalar("loss", episode_loss as f32, episode);
+        writer.add_scalar("alpha", alpha as f32, episode);
 
         // Update tracking
         last_100_solves[episodes_at_depth % 100] = episode_solve;
