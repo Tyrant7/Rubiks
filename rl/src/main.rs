@@ -29,6 +29,9 @@ pub fn get_device() -> Device {
 }
 
 fn train() -> Result<(), TchError> {
+    // Initialize network directory
+    std::fs::create_dir_all("./rl/nets").expect("Failed to create nets directory");
+
     // Define hyperparameters
     let episodes = 50000;
     let batch_size = 128;
