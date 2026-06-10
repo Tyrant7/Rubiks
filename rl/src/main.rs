@@ -33,8 +33,8 @@ fn train() -> Result<(), TchError> {
     std::fs::create_dir_all("./rl/nets").expect("Failed to create nets directory");
 
     // Define hyperparameters
-    let episodes = 50000;
-    let batch_size = 1024;
+    let episodes = 200000;
+    let batch_size = 512;
     let buffer_size = 50000;
     let learning_rate = 3e-4;
     let alpha_lr = 3e-4;
@@ -45,8 +45,8 @@ fn train() -> Result<(), TchError> {
     let max_scramble = 20;
 
     let alpha_vs = nn::VarStore::new(get_device());
-    let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(0.));
-    let target_entropy = 0.98 * -(OUTPUT_SIZE as f64).ln();
+    let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(-2.0));
+    let target_entropy = 0.5 * -(OUTPUT_SIZE as f64).ln();
     let mut alpha_opt = nn::Adam::default().build(&alpha_vs, alpha_lr)?;
     let mut alpha = log_alpha.exp().double_value(&[]);
 
@@ -148,8 +148,9 @@ fn train() -> Result<(), TchError> {
         let mut state = cube_env.reset(scramble_depth, max_steps);
 
         for _ in 0..max_steps {
-            // Action selection using soft Q learning
             let probs = actor.forward(&state.unsqueeze(0)); // [INPUT_SIZE] -> [1, INPUT_SIZE]
+            let probs = probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
+            let probs = &probs / probs.sum(Kind::Float); // renormalize after clamping
             let action = probs.multinomial(1, true).int64_value(&[0]) as usize;
 
             // Step environment -> (next_state, reward, done)
