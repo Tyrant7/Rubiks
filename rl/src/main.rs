@@ -151,7 +151,13 @@ fn train() -> Result<(), TchError> {
             let probs = actor.forward(&state.unsqueeze(0)); // [INPUT_SIZE] -> [1, INPUT_SIZE]
             let probs = probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
             let probs = &probs / probs.sum(Kind::Float); // renormalize after clamping
-            let action = probs.multinomial(1, true).int64_value(&[0]) as usize;
+
+            // Fall back to argmax if distribution is degenerate
+            let action = if probs.max().double_value(&[]) > 0.999 {
+                probs.argmax(1, false).int64_value(&[0]) as usize
+            } else {
+                probs.multinomial(1, true).int64_value(&[0]) as usize
+            };
 
             // Step environment -> (next_state, reward, done)
             let (next_state, reward, done) = cube_env.step(action);
