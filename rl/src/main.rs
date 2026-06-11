@@ -211,6 +211,8 @@ fn train() -> Result<(), TchError> {
                 // Compute target using actor's current policy and min of target critics
                 let target = tch::no_grad(|| {
                     let next_probs = actor.forward(&next_states); // [batch, 18]
+                    let next_probs = next_probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
+                    let next_probs = &next_probs / next_probs.sum(Kind::Float);
                     let next_log_probs = (next_probs.log() + 1e-8).clamp(-10., 0.);
 
                     let next_q1 = target_critic1.forward(&next_states);
