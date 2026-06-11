@@ -93,7 +93,8 @@ fn train() -> Result<(), TchError> {
     for episode in 0..episodes {
         // Logging variables
         let mut episode_reward = 0.;
-        let mut episode_loss = 0.;
+        let mut critic_episode_loss = 0.;
+        let mut actor_episode_loss = 0.;
         let mut loss_steps = 0;
         let mut episode_solve = false;
 
@@ -308,7 +309,10 @@ fn train() -> Result<(), TchError> {
                 });
 
                 // Logging
-                episode_loss += f32::try_from(&actor_loss).expect("loss calculation failed");
+                actor_episode_loss += f32::try_from(&actor_loss).expect("loss calculation failed");
+                critic_episode_loss += f32::try_from(&critic1_loss)
+                    .expect("loss calculation failed")
+                    + f32::try_from(&critic2_loss).expect("loss calculation failed");
                 loss_steps += 1;
             }
 
@@ -321,7 +325,8 @@ fn train() -> Result<(), TchError> {
         // Logging
         writer.add_scalar("scramble depth", scramble_depth as f32, episode);
         writer.add_scalar("solve rate", recent_solves as f32 / 100., episode);
-        writer.add_scalar("loss", episode_loss, episode);
+        writer.add_scalar("critic_loss (avg)", critic_episode_loss / 2., episode);
+        writer.add_scalar("actor_loss", actor_episode_loss, episode);
         writer.add_scalar("alpha", alpha as f32, episode);
 
         // Update tracking
@@ -329,14 +334,19 @@ fn train() -> Result<(), TchError> {
 
         // Logging
         println!(
-            "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | actor loss: {:7.4} | alpha: {:6.3}",
+            "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | actor loss: {:7.4} | critic loss (avg): {:7.4} | alpha: {:6.3}",
             episode + 1,
             episodes,
             scramble_depth,
             recent_solves,
             episode_reward,
             if loss_steps > 0 {
-                episode_loss / loss_steps as f32
+                actor_episode_loss / loss_steps as f32
+            } else {
+                0.
+            },
+            if loss_steps > 0 {
+                critic_episode_loss / 2. / loss_steps as f32
             } else {
                 0.
             },
