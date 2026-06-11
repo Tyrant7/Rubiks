@@ -33,9 +33,9 @@ fn train() -> Result<(), TchError> {
     std::fs::create_dir_all("./rl/nets").expect("Failed to create nets directory");
 
     // Define hyperparameters
-    let episodes = 200000;
+    let episodes = 50000;
     let batch_size = 512;
-    let buffer_size = 50000;
+    let buffer_size = 200000;
     let learning_rate = 3e-4;
     let alpha_lr = 3e-4;
     let tau = 0.005;
@@ -359,10 +359,13 @@ fn initialize_actor(vs: &nn::Path) -> impl Module {
             256,
             Default::default(),
         ))
+        .add(nn::layer_norm(vs / "ln1", vec![256], Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(vs / "layer2", 256, 256, Default::default()))
+        .add(nn::layer_norm(vs / "ln2", vec![256], Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(vs / "layer3", 256, 128, Default::default()))
+        .add(nn::layer_norm(vs / "ln3", vec![128], Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(
             vs / "layer4",
@@ -381,10 +384,13 @@ fn initialize_critic(vs: &nn::Path) -> impl Module {
             256,
             Default::default(),
         ))
+        .add(nn::layer_norm(vs / "ln1", vec![256], Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(vs / "layer2", 256, 256, Default::default()))
+        .add(nn::layer_norm(vs / "ln2", vec![256], Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(vs / "layer3", 256, 128, Default::default()))
+        .add(nn::layer_norm(vs / "ln3", vec![128], Default::default()))
         .add_fn(|xs| xs.relu())
         .add(nn::linear(
             vs / "layer4",
