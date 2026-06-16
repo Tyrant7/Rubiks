@@ -38,6 +38,7 @@ struct TrainingConfig {
     max_scramble: usize,
     curriculum_threshold: usize,
     target_entropy_scale: f64,
+    log_alpha_init: f64,
     bootstrap_truncations: bool,
     update_every: usize,
     target_network_frequency: usize,
@@ -77,7 +78,8 @@ impl TrainingConfig {
             min_steps,
             max_scramble: env_parse_min("RL_MAX_SCRAMBLE", 20, 1),
             curriculum_threshold: env_parse_clamped("RL_CURRICULUM_THRESHOLD", 10, 1, 100),
-            target_entropy_scale: env_parse("RL_TARGET_ENTROPY_SCALE", 0.89),
+            target_entropy_scale: env_parse("RL_TARGET_ENTROPY_SCALE", 0.2),
+            log_alpha_init: env_parse("RL_LOG_ALPHA_INIT", -2.0),
             bootstrap_truncations: env_parse_bool("RL_BOOTSTRAP_TRUNCATIONS", true),
             update_every: env_parse_min("RL_UPDATE_EVERY", 4, 1),
             target_network_frequency: env_parse_min("RL_TARGET_NETWORK_FREQUENCY", 8_000, 1),
@@ -298,7 +300,9 @@ fn sac_update(
     let q_min = q1_detached.minimum(&q2_detached);
 
     let alpha = log_alpha.exp();
-    let actor_loss = (&probs * (&alpha * &log_probs - &q_min)).mean(Kind::Float);
+    let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
+        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+        .mean(Kind::Float);
     actor_opt.zero_grad();
     actor_loss.backward();
     actor_opt.step();
@@ -312,9 +316,9 @@ fn sac_update(
             .mean(Kind::Float)
     });
     let entropy_error = &entropy - target_entropy;
-    let alpha_loss = (&probs.detach()
-        * (-log_alpha.exp() * (&log_probs + target_entropy).detach()))
-    .mean(Kind::Float);
+    let alpha_loss = (&probs.detach() * (-log_alpha * (&log_probs + target_entropy).detach()))
+        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+        .mean(Kind::Float);
 
     alpha_opt.zero_grad();
     alpha_loss.backward();
@@ -370,7 +374,9 @@ fn train_vectorized() -> Result<(), TchError> {
     std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
 
     let alpha_vs = nn::VarStore::new(get_device());
-    let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(0.0));
+    let log_alpha = alpha_vs
+        .root()
+        .var("log_alpha", &[], nn::Init::Const(config.log_alpha_init));
     let target_entropy = config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
     let mut alpha_opt = adam(&config).build(&alpha_vs, config.alpha_lr)?;
 
@@ -415,10 +421,12 @@ fn train_vectorized() -> Result<(), TchError> {
         get_device()
     );
     println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%",
+        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%",
         config.log_dir.display(),
         config.net_dir.display(),
         target_entropy,
+        config.target_entropy_scale,
+        config.log_alpha_init,
         config.alpha_lr,
         config.adam_eps,
         config.tau,
@@ -683,6 +691,16 @@ fn train_vectorized() -> Result<(), TchError> {
                     completed_episodes,
                 );
                 writer.add_scalar(
+                    "config/target_entropy_scale",
+                    config.target_entropy_scale as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "config/log_alpha_init",
+                    config.log_alpha_init as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
                     "config/target_network_frequency",
                     config.target_network_frequency as f32,
                     completed_episodes,
@@ -752,15 +770,35 @@ fn relu_sq(xs: &Tensor) -> Tensor {
     &activated * &activated
 }
 
-fn linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
     nn::linear(
         vs,
         in_dim,
         out_dim,
         nn::LinearConfig {
-            ws_init: nn::init::DEFAULT_KAIMING_NORMAL,
+            ws_init,
             bs_init: Some(nn::Init::Const(0.0)),
             bias: true,
+        },
+    )
+}
+
+fn hidden_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+    linear(vs, in_dim, out_dim, nn::init::DEFAULT_KAIMING_NORMAL)
+}
+
+fn residual_output_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+    linear(vs, in_dim, out_dim, nn::Init::Const(0.0))
+}
+
+fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+    linear(
+        vs,
+        in_dim,
+        out_dim,
+        nn::Init::Randn {
+            mean: 0.0,
+            stdev: 0.01,
         },
     )
 }
@@ -792,11 +830,11 @@ impl Module for ResidualNetwork {
 
 fn initialize_network(vs: &nn::Path) -> ResidualNetwork {
     ResidualNetwork {
-        input: linear(vs / "input", INPUT_SIZE as i64, 256),
+        input: hidden_linear(vs / "input", INPUT_SIZE as i64, 256),
         blocks: std::array::from_fn(|idx| ResidualBlock {
-            fc1: linear(vs / format!("block{idx}_fc1"), 256, 256),
-            fc2: linear(vs / format!("block{idx}_fc2"), 256, 256),
+            fc1: hidden_linear(vs / format!("block{idx}_fc1"), 256, 256),
+            fc2: residual_output_linear(vs / format!("block{idx}_fc2"), 256, 256),
         }),
-        head: linear(vs / "head", 256, OUTPUT_SIZE as i64),
+        head: head_linear(vs / "head", 256, OUTPUT_SIZE as i64),
     }
 }
