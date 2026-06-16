@@ -18,7 +18,6 @@ use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 
 // TODO: Train from checkpoints
 // TODO: Seeding for reproducibility
-// TODO: SAC
 // TODO: README file and TODO file
 
 const CUBE_SIZE: usize = 2;
