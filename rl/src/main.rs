@@ -114,7 +114,7 @@ fn train() -> Result<(), TchError> {
                 let mut s = cube_env.reset(scramble_depth, max_steps);
                 for _ in 0..max_steps {
                     let logits = actor.forward(&s.unsqueeze(0));
-                    let probs = logits.softmax(01, Kind::Float);
+                    let probs = logits.softmax(-1, Kind::Float);
                     let a = probs.argmax(1, false).int64_value(&[0]) as usize;
                     let (next_s, _, done) = cube_env.step(a);
                     s = next_s;
