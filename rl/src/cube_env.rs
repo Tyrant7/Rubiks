@@ -23,13 +23,7 @@ fn encode_cube(cube: &Cube<CUBE_SIZE>) -> Tensor {
     Tensor::from_slice(&data).to_device(get_device())
 }
 
-/// Calculates reward for the current cube based on correctly placed
-/// tile counts and whether or not the cube is solved
-fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
-    if cube.is_solved() {
-        return 1.0;
-    }
-
+fn count_correct_facelets(cube: &Cube<CUBE_SIZE>) -> usize {
     let faces = [
         FaceType::Top,
         FaceType::Bottom,
@@ -39,7 +33,7 @@ fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
         FaceType::Right,
     ];
 
-    let correct_tiles: f32 = faces
+    faces
         .iter()
         .map(|&ft| {
             // Score dominant tile colour on each face
@@ -48,21 +42,34 @@ fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
             let mut colour_counts = [0; 6];
             (0..CUBE_SIZE)
                 .flat_map(|r| (0..CUBE_SIZE).map(move |c| (r, c)))
-                .for_each(|(r, c)| colour_counts[face.get_tile_colour(r, c) as usize] += 1);
-
-            *colour_counts.iter().max().unwrap() as f32
+                .filter(|&(r, c)| face.get_tile_colour(r, c) == solved_colour)
+                .count()
         })
-        .sum();
+        .sum()
+}
 
-    // Normalised to [-1, 1] range roughly
-    const TILES: usize = CUBE_SIZE * CUBE_SIZE * 6;
-    (correct_tiles / TILES as f32) * 0.1 - 0.1
+/// Calculates reward for the current cube based on correctly placed
+/// facelet counts and whether or not the cube is solved.
+fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
+    if cube.is_solved() {
+        return 1.0;
+    }
+
+    const FACELETS: usize = CUBE_SIZE * CUBE_SIZE * 6;
+    (count_correct_facelets(cube) as f32 / FACELETS as f32) * 0.1 - 0.1
 }
 
 pub struct CubeEnv {
     cube: Cube<CUBE_SIZE>,
     max_steps: usize,
     steps: usize,
+}
+
+pub struct StepResult {
+    pub next_state: Tensor,
+    pub reward: f32,
+    pub terminated: bool,
+    pub truncated: bool,
 }
 
 impl CubeEnv {
@@ -77,23 +84,30 @@ impl CubeEnv {
 
     /// Scrambles this environment's cube and returns the associated state
     pub fn reset(&mut self, moves: usize, max_steps: usize) -> Tensor {
-        self.cube = Cube::default();
-        self.cube.scramble(moves, rubiks::ScrambleType::Random);
+        loop {
+            self.cube = Cube::default();
+            self.cube.scramble(moves, rubiks::ScrambleType::Random);
+            if moves == 0 || !self.cube.is_solved() {
+                break;
+            }
+        }
         self.steps = 0;
         self.max_steps = max_steps;
         encode_cube(&self.cube)
     }
 
-    /// Apply a turn, returns (next_state, reward, done)
-    pub fn step(&mut self, action: usize) -> (Tensor, f32, bool) {
+    /// Apply a turn and report true terminals separately from time-limit truncation.
+    pub fn step(&mut self, action: usize) -> StepResult {
         let turn = CubeEnv::map_action(action);
         self.cube.make_turn(turn);
         self.steps += 1;
-        (
-            encode_cube(&self.cube),
-            calculate_reward(&self.cube),
-            self.cube.is_solved() || self.steps >= self.max_steps,
-        )
+        let terminated = self.cube.is_solved();
+        StepResult {
+            next_state: encode_cube(&self.cube),
+            reward: calculate_reward(&self.cube),
+            terminated,
+            truncated: !terminated && self.steps >= self.max_steps,
+        }
     }
 
     /// Maps an action to a turn that can be applied to the cube
@@ -127,6 +141,15 @@ pub struct ReplayBuffer {
     transitions: Vec<Transition>,
 }
 
+pub struct SampleBatch {
+    pub states: Tensor,
+    pub actions: Tensor,
+    pub rewards: Tensor,
+    pub next_states: Tensor,
+    pub terminated: Tensor,
+    pub truncated: Tensor,
+}
+
 impl ReplayBuffer {
     pub fn new(capacity: usize) -> Self {
         ReplayBuffer {
@@ -153,8 +176,52 @@ impl ReplayBuffer {
             .collect()
     }
 
+    pub fn sample_tensors(&self, batch_size: usize) -> SampleBatch {
+        let batch = self.sample(batch_size);
+
+        SampleBatch {
+            states: Tensor::stack(
+                &batch
+                    .iter()
+                    .map(|t| t.state.shallow_clone())
+                    .collect::<Vec<_>>(),
+                0,
+            ),
+            actions: Tensor::from_slice(&batch.iter().map(|t| t.action as i64).collect::<Vec<_>>())
+                .to_device(get_device()),
+            rewards: Tensor::from_slice(&batch.iter().map(|t| t.reward).collect::<Vec<_>>())
+                .to_device(get_device()),
+            next_states: Tensor::stack(
+                &batch
+                    .iter()
+                    .map(|t| t.next_state.shallow_clone())
+                    .collect::<Vec<_>>(),
+                0,
+            ),
+            terminated: Tensor::from_slice(
+                &batch
+                    .iter()
+                    .map(|t| if t.terminated { 1f32 } else { 0f32 })
+                    .collect::<Vec<_>>(),
+            )
+            .to_device(get_device()),
+            truncated: Tensor::from_slice(
+                &batch
+                    .iter()
+                    .map(|t| if t.truncated { 1f32 } else { 0f32 })
+                    .collect::<Vec<_>>(),
+            )
+            .to_device(get_device()),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.transitions.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.transitions.clear();
+        self.insertions = 0;
     }
 }
 
@@ -163,7 +230,8 @@ pub struct Transition {
     pub action: usize,
     pub reward: f32,
     pub next_state: Tensor,
-    pub done: bool,
+    pub terminated: bool,
+    pub truncated: bool,
 }
 
 impl Transition {
@@ -172,14 +240,16 @@ impl Transition {
         action: usize,
         reward: f32,
         next_state: &Tensor,
-        done: bool,
+        terminated: bool,
+        truncated: bool,
     ) -> Self {
         Transition {
             state: state.shallow_clone(),
             action,
             reward,
             next_state: next_state.shallow_clone(),
-            done,
+            terminated,
+            truncated,
         }
     }
 }
