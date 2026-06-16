@@ -138,10 +138,10 @@ impl ReplayBuffer {
             self.transitions.push(transition);
         } else {
             // Overwrite oldest transitions when the buffer is full
-            let idx = self.insertions % self.capacity;
-            self.transitions[idx] = transition;
+            self.transitions[self.insertions] = transition;
         }
         self.insertions += 1;
+        self.insertions %= self.capacity;
     }
 
     pub fn sample(&self, batch_size: usize) -> Vec<&Transition> {
