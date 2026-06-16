@@ -216,6 +216,11 @@ impl ReplayBuffer {
     pub fn len(&self) -> usize {
         self.transitions.len()
     }
+
+    pub fn clear(&mut self) {
+        self.transitions.clear();
+        self.insertions = 0;
+    }
 }
 
 pub struct Transition {

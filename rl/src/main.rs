@@ -37,14 +37,18 @@ struct TrainingConfig {
     min_steps: usize,
     max_scramble: usize,
     curriculum_threshold: usize,
+    curriculum_min_episodes: usize,
     target_entropy_scale: f64,
     log_alpha_init: f64,
     bootstrap_truncations: bool,
+    clear_replay_on_advance: bool,
     update_every: usize,
     target_network_frequency: usize,
     adam_eps: f64,
     learning_starts: usize,
     num_envs: usize,
+    eval_every: usize,
+    eval_episodes: usize,
     log_every: usize,
     save_every: usize,
     run_name: String,
@@ -78,14 +82,18 @@ impl TrainingConfig {
             min_steps,
             max_scramble: env_parse_min("RL_MAX_SCRAMBLE", 20, 1),
             curriculum_threshold: env_parse_clamped("RL_CURRICULUM_THRESHOLD", 10, 1, 100),
+            curriculum_min_episodes: env_parse_min("RL_CURRICULUM_MIN_EPISODES", 1, 1),
             target_entropy_scale: env_parse("RL_TARGET_ENTROPY_SCALE", 0.2),
             log_alpha_init: env_parse("RL_LOG_ALPHA_INIT", -2.0),
             bootstrap_truncations: env_parse_bool("RL_BOOTSTRAP_TRUNCATIONS", true),
+            clear_replay_on_advance: env_parse_bool("RL_CLEAR_REPLAY_ON_ADVANCE", false),
             update_every: env_parse_min("RL_UPDATE_EVERY", 4, 1),
             target_network_frequency: env_parse_min("RL_TARGET_NETWORK_FREQUENCY", 8_000, 1),
             adam_eps: env_parse("RL_ADAM_EPS", 1e-4),
             learning_starts: env_parse("RL_LEARNING_STARTS", 5_000),
             num_envs: env_parse_min("RL_NUM_ENVS", 16, 1),
+            eval_every: env_parse("RL_EVAL_EVERY", 0),
+            eval_episodes: env_parse_min("RL_EVAL_EPISODES", 64, 1),
             log_every: env_parse_min("RL_LOG_EVERY", 1, 1),
             save_every: env_parse_min("RL_SAVE_EVERY", 100, 1),
             log_dir: PathBuf::from(log_root).join(&run_name),
@@ -368,6 +376,59 @@ fn update_target_networks(
     });
 }
 
+struct EvalMetrics {
+    solve_rate: f32,
+    average_reward: f32,
+    average_steps: f32,
+}
+
+fn evaluate_greedy(
+    actor: &ResidualNetwork,
+    scramble_depth: usize,
+    max_steps: usize,
+    episodes: usize,
+) -> EvalMetrics {
+    let mut env = CubeEnv::new();
+    let mut solves = 0usize;
+    let mut total_reward = 0f32;
+    let mut total_steps = 0usize;
+
+    for _ in 0..episodes {
+        let mut state = env.reset(scramble_depth, max_steps);
+
+        for step_idx in 1..=max_steps {
+            let action = tch::no_grad(|| {
+                actor
+                    .forward(&state.unsqueeze(0))
+                    .argmax(1, false)
+                    .int64_value(&[0]) as usize
+            });
+            let step = env.step(action);
+            total_reward += step.reward;
+            total_steps += 1;
+            state = step.next_state;
+
+            if step.terminated {
+                solves += 1;
+                break;
+            }
+            if step.truncated {
+                break;
+            }
+
+            if step_idx == max_steps {
+                break;
+            }
+        }
+    }
+
+    EvalMetrics {
+        solve_rate: solves as f32 / episodes as f32,
+        average_reward: total_reward / episodes as f32,
+        average_steps: total_steps as f32 / episodes as f32,
+    }
+}
+
 fn train_vectorized() -> Result<(), TchError> {
     let config = TrainingConfig::from_env();
     std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
@@ -421,7 +482,7 @@ fn train_vectorized() -> Result<(), TchError> {
         get_device()
     );
     println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%",
+        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
         config.log_dir.display(),
         config.net_dir.display(),
         target_entropy,
@@ -436,6 +497,10 @@ fn train_vectorized() -> Result<(), TchError> {
         config.learning_starts,
         config.num_envs,
         config.curriculum_threshold,
+        config.curriculum_min_episodes,
+        config.clear_replay_on_advance,
+        config.eval_every,
+        config.eval_episodes,
     );
 
     let start_time = Instant::now();
@@ -548,6 +613,30 @@ fn train_vectorized() -> Result<(), TchError> {
                 last_100_solves = [false; 100];
             }
             let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
+
+            if config.eval_every > 0 && completed_episodes % config.eval_every == 0 {
+                let eval_metrics = evaluate_greedy(
+                    &actor,
+                    scramble_depth,
+                    config.max_steps(scramble_depth),
+                    config.eval_episodes,
+                );
+                writer.add_scalar(
+                    "eval/greedy_solve_rate",
+                    eval_metrics.solve_rate,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "eval/greedy_average_reward",
+                    eval_metrics.average_reward,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "eval/greedy_average_steps",
+                    eval_metrics.average_steps,
+                    completed_episodes,
+                );
+            }
 
             if update_metrics.steps > 0 && completed_episodes % config.log_every == 0 {
                 let now = Instant::now();
@@ -686,6 +775,35 @@ fn train_vectorized() -> Result<(), TchError> {
                     completed_episodes,
                 );
                 writer.add_scalar(
+                    "config/curriculum_threshold",
+                    config.curriculum_threshold as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "config/curriculum_min_episodes",
+                    config.curriculum_min_episodes as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "config/clear_replay_on_advance",
+                    if config.clear_replay_on_advance {
+                        1.
+                    } else {
+                        0.
+                    },
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "config/eval_episodes",
+                    config.eval_episodes as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "config/eval_every",
+                    config.eval_every as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
                     "config/adam_eps",
                     config.adam_eps as f32,
                     completed_episodes,
@@ -736,11 +854,16 @@ fn train_vectorized() -> Result<(), TchError> {
 
             if curriculum_active
                 && recent_solves >= config.curriculum_threshold
+                && episodes_at_depth >= config.curriculum_min_episodes
                 && scramble_depth < config.max_scramble
             {
                 scramble_depth += 1;
                 episodes_at_depth = 0;
                 last_100_solves = [false; 100];
+                if config.clear_replay_on_advance {
+                    replay_buffer.clear();
+                    update_metrics = UpdateMetricTotals::default();
+                }
                 println!("Advanced curriculum to depth {scramble_depth}");
 
                 let max_steps = config.max_steps(scramble_depth);
