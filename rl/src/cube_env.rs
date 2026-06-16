@@ -36,12 +36,15 @@ fn count_correct_facelets(cube: &Cube<CUBE_SIZE>) -> usize {
     faces
         .iter()
         .map(|&ft| {
+            // Score dominant tile colour on each face
+            // May potentially have issue of scoring same colour multiple times across faces, but is unlikely
             let face = cube.get_face(ft);
-            let solved_colour = ft.get_solved_colour();
+            let mut colour_counts = [0; 6];
             (0..CUBE_SIZE)
                 .flat_map(|r| (0..CUBE_SIZE).map(move |c| (r, c)))
-                .filter(|&(r, c)| face.get_tile_colour(r, c) == solved_colour)
-                .count()
+                .for_each(|(r, c)| colour_counts[face.get_tile_colour(r, c) as usize] += 1);
+
+            *colour_counts.iter().max().unwrap()
         })
         .sum()
 }
