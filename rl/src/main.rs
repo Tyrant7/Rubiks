@@ -46,7 +46,7 @@ fn train() -> Result<(), TchError> {
 
     let alpha_vs = nn::VarStore::new(get_device());
     let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(-2.0));
-    let target_entropy = 0.89 * (OUTPUT_SIZE as f64).ln();
+    let target_entropy = -0.89 * (OUTPUT_SIZE as f64).ln();
     let mut alpha_opt = nn::Adam::default().build(&alpha_vs, alpha_lr)?;
     let mut alpha = log_alpha.exp().double_value(&[]);
 
