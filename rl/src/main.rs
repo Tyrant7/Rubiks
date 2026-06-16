@@ -48,7 +48,6 @@ fn train() -> Result<(), TchError> {
     let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(-2.0));
     let target_entropy = -0.89 * (OUTPUT_SIZE as f64).ln();
     let mut alpha_opt = nn::Adam::default().build(&alpha_vs, alpha_lr)?;
-    let mut alpha = log_alpha.exp().double_value(&[]);
 
     // Initialize models
     let actor_vs = nn::VarStore::new(get_device());
@@ -95,6 +94,7 @@ fn train() -> Result<(), TchError> {
         let mut actor_episode_loss = 0.;
         let mut loss_steps = 0;
         let mut episode_solve = false;
+        let mut episode_entropy = 0.;
 
         // Encode fresh environment
         let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
@@ -217,7 +217,7 @@ fn train() -> Result<(), TchError> {
                     let next_min_q = next_q1.minimum(&next_q2);
 
                     // Soft value: expectations over all actions of (Q - alpha * log pi)
-                    let next_v = (&next_probs * (&next_min_q - alpha * &next_log_probs))
+                    let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
                         .sum_dim_intlist(&[1i64][..], false, Kind::Float); // [batch]
 
                     &rewards + gamma * &next_v * (1. - &dones) // [batch]
@@ -259,7 +259,7 @@ fn train() -> Result<(), TchError> {
                 let q_min = q1_detached.minimum(&q2_detached);
 
                 // Actor loss: wants high Q-values but penalized for being too certain'
-                let actor_loss = (&probs * (alpha * &log_probs - &q_min))
+                let actor_loss = (&probs * (log_alpha.exp() * &log_probs - &q_min))
                     .sum_dim_intlist(&[1i64][..], false, Kind::Float)
                     .mean(Kind::Float);
                 actor_opt.zero_grad();
@@ -270,21 +270,19 @@ fn train() -> Result<(), TchError> {
                 actor_opt.step();
 
                 // === ALPHA UPDATE ===
-                let alpha_loss = {
+                let entropy = tch::no_grad(|| {
                     let logits = tch::no_grad(|| actor.forward(&states));
                     let probs = logits.softmax(-1, Kind::Float);
                     let log_probs = logits.log_softmax(-1, Kind::Float);
-                    let entropy = tch::no_grad(|| {
-                        -(&probs * &log_probs)
-                            .sum_dim_intlist(&[1i64][..], false, Kind::Float)
-                            .mean(Kind::Float)
-                    });
-                    log_alpha.exp() * (entropy - target_entropy)
-                };
+                    -(&probs * &log_probs)
+                        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+                        .mean(Kind::Float)
+                });
+                let alpha_loss = log_alpha.exp() * (&entropy - target_entropy);
+
                 alpha_opt.zero_grad();
                 alpha_loss.backward();
                 alpha_opt.step();
-                alpha = log_alpha.exp().double_value(&[]);
 
                 // Soft updates
                 tch::no_grad(|| {
@@ -311,6 +309,7 @@ fn train() -> Result<(), TchError> {
                 critic_episode_loss += f32::try_from(&critic1_loss)
                     .expect("loss calculation failed")
                     + f32::try_from(&critic2_loss).expect("loss calculation failed");
+                episode_entropy += f32::try_from(&entropy).expect("entropy calculation failed");
                 loss_steps += 1;
             }
 
@@ -321,36 +320,39 @@ fn train() -> Result<(), TchError> {
         }
 
         // Logging
-        writer.add_scalar("scramble depth", scramble_depth as f32, episode);
-        writer.add_scalar("solve rate", recent_solves as f32 / 100., episode);
-        writer.add_scalar("critic_loss (avg)", critic_episode_loss / 2., episode);
-        writer.add_scalar("actor_loss", actor_episode_loss, episode);
-        writer.add_scalar("alpha", alpha as f32, episode);
+        if loss_steps > 0 {
+            writer.add_scalar("scramble depth", scramble_depth as f32, episode);
+            writer.add_scalar("solve rate", recent_solves as f32 / 100., episode);
+            writer.add_scalar(
+                "critic_loss (avg)",
+                critic_episode_loss / loss_steps as f32 / 2.,
+                episode,
+            );
+            writer.add_scalar(
+                "actor_loss",
+                actor_episode_loss / loss_steps as f32,
+                episode,
+            );
+            writer.add_scalar("alpha", log_alpha.exp().double_value(&[]) as f32, episode);
+            writer.add_scalar("entropy", episode_entropy / loss_steps as f32, episode);
+
+            println!(
+                "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | actor loss: {:7.4} | critic loss (avg): {:7.4} | alpha: {:5.3} | entropy: {:6.4}",
+                episode + 1,
+                episodes,
+                scramble_depth,
+                recent_solves,
+                episode_reward,
+                actor_episode_loss / loss_steps as f32,
+                critic_episode_loss / 2. / loss_steps as f32,
+                log_alpha.exp().double_value(&[]) as f32,
+                episode_entropy / loss_steps as f32,
+            );
+        }
 
         // Update tracking
         last_100_solves[episodes_at_depth % 100] = episode_solve;
         episodes_at_depth += 1;
-
-        // Logging
-        println!(
-            "Episode {:6}/{:6} | scramble depth: {:2} | solves: {:2}% | reward: {:6.2} | actor loss: {:7.4} | critic loss (avg): {:7.4} | alpha: {:6.3}",
-            episode + 1,
-            episodes,
-            scramble_depth,
-            recent_solves,
-            episode_reward,
-            if loss_steps > 0 {
-                actor_episode_loss / loss_steps as f32
-            } else {
-                0.
-            },
-            if loss_steps > 0 {
-                critic_episode_loss / 2. / loss_steps as f32
-            } else {
-                0.
-            },
-            alpha
-        );
 
         // Save to file
         if episode % 100 == 0 {
