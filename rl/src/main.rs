@@ -46,7 +46,7 @@ fn train() -> Result<(), TchError> {
 
     let alpha_vs = nn::VarStore::new(get_device());
     let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(-2.0));
-    let target_entropy = 0.5 * -(OUTPUT_SIZE as f64).ln();
+    let target_entropy = 0.89 * (OUTPUT_SIZE as f64).ln();
     let mut alpha_opt = nn::Adam::default().build(&alpha_vs, alpha_lr)?;
     let mut alpha = log_alpha.exp().double_value(&[]);
 
@@ -54,20 +54,18 @@ fn train() -> Result<(), TchError> {
     let actor_vs = nn::VarStore::new(get_device());
     let critic1_vs = nn::VarStore::new(get_device());
     let critic2_vs = nn::VarStore::new(get_device());
-    let target_critic1_vs = nn::VarStore::new(get_device());
-    let target_critic2_vs = nn::VarStore::new(get_device());
+    let mut target_critic1_vs = nn::VarStore::new(get_device());
+    let mut target_critic2_vs = nn::VarStore::new(get_device());
 
-    let actor_root = actor_vs.root();
-    let critic1_root = critic1_vs.root();
-    let critic2_root = critic2_vs.root();
-    let target_critic1_root = target_critic1_vs.root();
-    let target_critic2_root = target_critic2_vs.root();
+    let actor = initialize_network(&actor_vs.root());
+    let critic1 = initialize_network(&critic1_vs.root());
+    let critic2 = initialize_network(&critic2_vs.root());
 
-    let actor = initialize_actor(&actor_root);
-    let critic1 = initialize_critic(&critic1_root);
-    let critic2 = initialize_critic(&critic2_root);
-    let target_critic1 = initialize_critic(&target_critic1_root);
-    let target_critic2 = initialize_critic(&target_critic2_root);
+    let target_critic1 = initialize_network(&target_critic1_vs.root());
+    let target_critic2 = initialize_network(&target_critic2_vs.root());
+
+    target_critic1_vs.copy(&critic1_vs)?;
+    target_critic2_vs.copy(&critic2_vs)?;
 
     let mut actor_opt = nn::Adam::default().build(&actor_vs, learning_rate)?;
     let mut critic1_opt = nn::Adam::default().build(&critic1_vs, learning_rate)?;
@@ -115,7 +113,8 @@ fn train() -> Result<(), TchError> {
             for _ in 0..eval_episodes {
                 let mut s = cube_env.reset(scramble_depth, max_steps);
                 for _ in 0..max_steps {
-                    let probs = actor.forward(&s.unsqueeze(0));
+                    let logits = actor.forward(&s.unsqueeze(0));
+                    let probs = logits.softmax(01, Kind::Float);
                     let a = probs.argmax(1, false).int64_value(&[0]) as usize;
                     let (next_s, _, done) = cube_env.step(a);
                     s = next_s;
@@ -149,9 +148,8 @@ fn train() -> Result<(), TchError> {
         let mut state = cube_env.reset(scramble_depth, max_steps);
 
         for _ in 0..max_steps {
-            let probs = actor.forward(&state.unsqueeze(0)); // [INPUT_SIZE] -> [1, INPUT_SIZE]
-            let probs = probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
-            let probs = &probs / probs.sum_dim_intlist(&[1i64][..], false, Kind::Float); // renormalize after clamping
+            let logits = actor.forward(&state.unsqueeze(0)); // [INPUT_SIZE] -> [1, INPUT_SIZE]
+            let probs = logits.softmax(-1, Kind::Float);
 
             // Fall back to argmax if distribution is degenerate
             let action = if probs.max().double_value(&[]) > 0.999 {
@@ -211,11 +209,9 @@ fn train() -> Result<(), TchError> {
                 // === CRITIC UPDATE ===
                 // Compute target using actor's current policy and min of target critics
                 let target = tch::no_grad(|| {
-                    let next_probs = actor.forward(&next_states); // [batch, 18]
-                    let next_probs = next_probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
-                    let next_probs =
-                        &next_probs / next_probs.sum_dim_intlist(&[1i64][..], false, Kind::Float);
-                    let next_log_probs = (next_probs.log() + 1e-8).clamp(-10., 0.);
+                    let next_logits = actor.forward(&next_states); // [batch, 18]
+                    let next_probs = next_logits.softmax(-1, Kind::Float);
+                    let next_log_probs = next_logits.log_softmax(-1, Kind::Float);
 
                     let next_q1 = target_critic1.forward(&next_states);
                     let next_q2 = target_critic2.forward(&next_states);
@@ -255,8 +251,9 @@ fn train() -> Result<(), TchError> {
                 critic2_opt.step();
 
                 // === ACTOR UPDATE ===
-                let probs = actor.forward(&states); // [batch, 18]
-                let log_probs = (probs.log() + 1e-8).clamp(-10., 0.);
+                let logits = actor.forward(&states); // [batch, 18]
+                let probs = logits.softmax(-1, Kind::Float);
+                let log_probs = logits.log_softmax(-1, Kind::Float);
 
                 let q1_detached = tch::no_grad(|| critic1.forward(&states));
                 let q2_detached = tch::no_grad(|| critic2.forward(&states));
@@ -275,14 +272,15 @@ fn train() -> Result<(), TchError> {
 
                 // === ALPHA UPDATE ===
                 let alpha_loss = {
-                    let probs = tch::no_grad(|| actor.forward(&states));
-                    let log_probs = (probs.log() + 1e-8).clamp(-10., 0.);
+                    let logits = tch::no_grad(|| actor.forward(&states));
+                    let probs = logits.softmax(-1, Kind::Float);
+                    let log_probs = logits.log_softmax(-1, Kind::Float);
                     let entropy = tch::no_grad(|| {
                         -(&probs * &log_probs)
                             .sum_dim_intlist(&[1i64][..], false, Kind::Float)
                             .mean(Kind::Float)
                     });
-                    &log_alpha * (entropy - target_entropy)
+                    log_alpha.exp() * (entropy - target_entropy)
                 };
                 alpha_opt.zero_grad();
                 alpha_loss.backward();
@@ -370,32 +368,7 @@ fn train() -> Result<(), TchError> {
     Result::Ok(())
 }
 
-fn initialize_actor(vs: &nn::Path) -> impl Module {
-    nn::seq()
-        .add(nn::linear(
-            vs / "layer1",
-            INPUT_SIZE as i64,
-            256,
-            Default::default(),
-        ))
-        .add(nn::layer_norm(vs / "ln1", vec![256], Default::default()))
-        .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer2", 256, 256, Default::default()))
-        .add(nn::layer_norm(vs / "ln2", vec![256], Default::default()))
-        .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer3", 256, 128, Default::default()))
-        .add(nn::layer_norm(vs / "ln3", vec![128], Default::default()))
-        .add_fn(|xs| xs.relu())
-        .add(nn::linear(
-            vs / "layer4",
-            128,
-            OUTPUT_SIZE as i64,
-            Default::default(),
-        ))
-        .add_fn(|xs| xs.softmax(-1, Kind::Float))
-}
-
-fn initialize_critic(vs: &nn::Path) -> impl Module {
+fn initialize_network(vs: &nn::Path) -> nn::Sequential {
     nn::seq()
         .add(nn::linear(
             vs / "layer1",
