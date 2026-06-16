@@ -95,7 +95,7 @@ impl CubeEnv {
 
     /// Maps an action to a turn that can be applied to the cube
     fn map_action(action: usize) -> Turn<CUBE_SIZE> {
-        // Since action is in [0, 11], this will allow us to map it to 3 groups of 6
+        // Since action is in [0, 18), this will allow us to map it to 3 groups of 6
         let ft = match action / 3 {
             0 => FaceType::Top,
             1 => FaceType::Bottom,
