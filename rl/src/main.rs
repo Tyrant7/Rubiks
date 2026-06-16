@@ -562,7 +562,7 @@ fn train_vectorized() -> Result<(), TchError> {
 
             if env_steps > config.learning_starts
                 && replay_buffer.len() >= config.batch_size
-                && env_steps % config.update_every == 0
+                && env_steps.is_multiple_of(config.update_every)
             {
                 update_metrics.add(sac_update(
                     &config,
@@ -583,7 +583,7 @@ fn train_vectorized() -> Result<(), TchError> {
             }
 
             if env_steps > config.learning_starts
-                && env_steps % config.target_network_frequency == 0
+                && env_steps.is_multiple_of(config.target_network_frequency)
             {
                 update_target_networks(
                     &config,
@@ -613,7 +613,7 @@ fn train_vectorized() -> Result<(), TchError> {
             }
             let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
 
-            if config.eval_every > 0 && completed_episodes % config.eval_every == 0 {
+            if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
                 let eval_metrics = evaluate_greedy(
                     &actor,
                     scramble_depth,
@@ -637,7 +637,7 @@ fn train_vectorized() -> Result<(), TchError> {
                 );
             }
 
-            if update_metrics.steps > 0 && completed_episodes % config.log_every == 0 {
+            if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {
                 let now = Instant::now();
                 let elapsed_secs = (now - start_time).as_secs_f32().max(f32::EPSILON);
                 let recent_elapsed_secs = (now - last_log_time).as_secs_f32().max(f32::EPSILON);
@@ -844,7 +844,7 @@ fn train_vectorized() -> Result<(), TchError> {
                 last_log_env_steps = env_steps;
             }
 
-            if completed_episodes % config.save_every == 0 {
+            if completed_episodes.is_multiple_of(config.save_every) {
                 actor_vs.save(config.net_dir.join("actor.ot"))?;
                 critic1_vs.save(config.net_dir.join("critic1.ot"))?;
                 critic2_vs.save(config.net_dir.join("critic2.ot"))?;
