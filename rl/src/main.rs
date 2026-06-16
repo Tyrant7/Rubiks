@@ -37,7 +37,7 @@ fn train() -> Result<(), TchError> {
     let batch_size = 512;
     let buffer_size = 200000;
     let learning_rate = 3e-4;
-    let alpha_lr = 3e-4;
+    let alpha_lr = 1e-4;
     let tau = 0.005;
     let gamma = 0.99;
     let max_max_steps = 40;
@@ -151,7 +151,7 @@ fn train() -> Result<(), TchError> {
         for _ in 0..max_steps {
             let probs = actor.forward(&state.unsqueeze(0)); // [INPUT_SIZE] -> [1, INPUT_SIZE]
             let probs = probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
-            let probs = &probs / probs.sum(Kind::Float); // renormalize after clamping
+            let probs = &probs / probs.sum_dim_intlist(&[1i64][..], false, Kind::Float); // renormalize after clamping
 
             // Fall back to argmax if distribution is degenerate
             let action = if probs.max().double_value(&[]) > 0.999 {
@@ -213,7 +213,8 @@ fn train() -> Result<(), TchError> {
                 let target = tch::no_grad(|| {
                     let next_probs = actor.forward(&next_states); // [batch, 18]
                     let next_probs = next_probs.clamp(1e-8, 1.0); // clamping to avoid probability zero
-                    let next_probs = &next_probs / next_probs.sum(Kind::Float);
+                    let next_probs =
+                        &next_probs / next_probs.sum_dim_intlist(&[1i64][..], false, Kind::Float);
                     let next_log_probs = (next_probs.log() + 1e-8).clamp(-10., 0.);
 
                     let next_q1 = target_critic1.forward(&next_states);
