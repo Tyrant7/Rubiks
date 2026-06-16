@@ -142,7 +142,6 @@ fn train() -> Result<(), TchError> {
                 last_100_solves[indices[i]] = true;
             }
         }
-        episodes_at_depth += 1;
 
         let max_steps = (scramble_depth * 3).clamp(min_steps, max_max_steps);
         let mut state = cube_env.reset(scramble_depth, max_steps);
@@ -330,6 +329,7 @@ fn train() -> Result<(), TchError> {
 
         // Update tracking
         last_100_solves[episodes_at_depth % 100] = episode_solve;
+        episodes_at_depth += 1;
 
         // Logging
         println!(
