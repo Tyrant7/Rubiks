@@ -40,6 +40,8 @@ struct TrainingConfig {
     target_entropy_scale: f64,
     bootstrap_truncations: bool,
     update_every: usize,
+    target_network_frequency: usize,
+    adam_eps: f64,
     learning_starts: usize,
     num_envs: usize,
     log_every: usize,
@@ -68,16 +70,18 @@ impl TrainingConfig {
             batch_size: env_parse_min("RL_BATCH_SIZE", 256, 1),
             buffer_size: env_parse_min("RL_BUFFER_SIZE", 200_000, 1),
             learning_rate: env_parse("RL_LEARNING_RATE", 3e-4),
-            alpha_lr: env_parse("RL_ALPHA_LR", 1e-4),
-            tau: env_parse("RL_TAU", 0.005),
+            alpha_lr: env_parse("RL_ALPHA_LR", 3e-4),
+            tau: env_parse("RL_TAU", 1.0),
             gamma: env_parse("RL_GAMMA", 0.99),
             max_steps_cap,
             min_steps,
             max_scramble: env_parse_min("RL_MAX_SCRAMBLE", 20, 1),
             curriculum_threshold: env_parse_clamped("RL_CURRICULUM_THRESHOLD", 10, 1, 100),
             target_entropy_scale: env_parse("RL_TARGET_ENTROPY_SCALE", 0.89),
-            bootstrap_truncations: env_parse_bool("RL_BOOTSTRAP_TRUNCATIONS", false),
-            update_every: env_parse_min("RL_UPDATE_EVERY", 1, 1),
+            bootstrap_truncations: env_parse_bool("RL_BOOTSTRAP_TRUNCATIONS", true),
+            update_every: env_parse_min("RL_UPDATE_EVERY", 4, 1),
+            target_network_frequency: env_parse_min("RL_TARGET_NETWORK_FREQUENCY", 8_000, 1),
+            adam_eps: env_parse("RL_ADAM_EPS", 1e-4),
             learning_starts: env_parse("RL_LEARNING_STARTS", 5_000),
             num_envs: env_parse_min("RL_NUM_ENVS", 16, 1),
             log_every: env_parse_min("RL_LOG_EVERY", 1, 1),
@@ -218,21 +222,20 @@ pub fn get_device() -> Device {
     Device::cuda_if_available()
 }
 
+fn adam(config: &TrainingConfig) -> nn::Adam {
+    nn::Adam::default().eps(config.adam_eps)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sac_update(
     config: &TrainingConfig,
     target_entropy: f64,
     replay_buffer: &ReplayBuffer,
-    actor: &nn::Sequential,
-    critic1: &nn::Sequential,
-    critic2: &nn::Sequential,
-    target_critic1: &nn::Sequential,
-    target_critic2: &nn::Sequential,
-    actor_vs: &nn::VarStore,
-    critic1_vs: &nn::VarStore,
-    critic2_vs: &nn::VarStore,
-    target_critic1_vs: &mut nn::VarStore,
-    target_critic2_vs: &mut nn::VarStore,
+    actor: &ResidualNetwork,
+    critic1: &ResidualNetwork,
+    critic2: &ResidualNetwork,
+    target_critic1: &ResidualNetwork,
+    target_critic2: &ResidualNetwork,
     actor_opt: &mut nn::Optimizer,
     critic1_opt: &mut nn::Optimizer,
     critic2_opt: &mut nn::Optimizer,
@@ -272,24 +275,18 @@ fn sac_update(
         .forward(&states)
         .gather(1, &actions.unsqueeze(1), false)
         .squeeze_dim(1);
-    let critic1_loss = q1.huber_loss(&target, tch::Reduction::Mean, 0.5);
+    let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
     critic1_opt.zero_grad();
     critic1_loss.backward();
-    critic1_vs.trainable_variables().iter().for_each(|v| {
-        let _ = v.grad().clamp_(-0.5, 0.5);
-    });
     critic1_opt.step();
 
     let q2 = critic2
         .forward(&states)
         .gather(1, &actions.unsqueeze(1), false)
         .squeeze_dim(1);
-    let critic2_loss = q2.huber_loss(&target, tch::Reduction::Mean, 0.5);
+    let critic2_loss = q2.mse_loss(&target, tch::Reduction::Mean);
     critic2_opt.zero_grad();
     critic2_loss.backward();
-    critic2_vs.trainable_variables().iter().for_each(|v| {
-        let _ = v.grad().clamp_(-0.5, 0.5);
-    });
     critic2_opt.step();
 
     let logits = actor.forward(&states);
@@ -301,14 +298,9 @@ fn sac_update(
     let q_min = q1_detached.minimum(&q2_detached);
 
     let alpha = log_alpha.exp();
-    let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
-        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
-        .mean(Kind::Float);
+    let actor_loss = (&probs * (&alpha * &log_probs - &q_min)).mean(Kind::Float);
     actor_opt.zero_grad();
     actor_loss.backward();
-    actor_vs.trainable_variables().iter().for_each(|v| {
-        let _ = v.grad().clamp_(-0.5, 0.5);
-    });
     actor_opt.step();
 
     let entropy = tch::no_grad(|| {
@@ -320,30 +312,13 @@ fn sac_update(
             .mean(Kind::Float)
     });
     let entropy_error = &entropy - target_entropy;
-    let alpha_loss = log_alpha * &entropy_error;
+    let alpha_loss = (&probs.detach()
+        * (-log_alpha.exp() * (&log_probs + target_entropy).detach()))
+    .mean(Kind::Float);
 
     alpha_opt.zero_grad();
     alpha_loss.backward();
     alpha_opt.step();
-
-    tch::no_grad(|| {
-        for (tp, pp) in target_critic1_vs
-            .trainable_variables()
-            .iter_mut()
-            .zip(critic1_vs.trainable_variables().iter())
-        {
-            let updated = pp * config.tau + &*tp * (1. - config.tau);
-            tp.copy_(&updated);
-        }
-        for (tp, pp) in target_critic2_vs
-            .trainable_variables()
-            .iter_mut()
-            .zip(critic2_vs.trainable_variables().iter())
-        {
-            let updated = pp * config.tau + &*tp * (1. - config.tau);
-            tp.copy_(&updated);
-        }
-    });
 
     UpdateMetrics {
         actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
@@ -362,15 +337,42 @@ fn sac_update(
     }
 }
 
+fn update_target_networks(
+    config: &TrainingConfig,
+    critic1_vs: &nn::VarStore,
+    critic2_vs: &nn::VarStore,
+    target_critic1_vs: &mut nn::VarStore,
+    target_critic2_vs: &mut nn::VarStore,
+) {
+    tch::no_grad(|| {
+        for (tp, pp) in target_critic1_vs
+            .trainable_variables()
+            .iter_mut()
+            .zip(critic1_vs.trainable_variables().iter())
+        {
+            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            tp.copy_(&updated);
+        }
+        for (tp, pp) in target_critic2_vs
+            .trainable_variables()
+            .iter_mut()
+            .zip(critic2_vs.trainable_variables().iter())
+        {
+            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            tp.copy_(&updated);
+        }
+    });
+}
+
 fn train_vectorized() -> Result<(), TchError> {
     let config = TrainingConfig::from_env();
     std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
     std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
 
     let alpha_vs = nn::VarStore::new(get_device());
-    let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(-2.0));
+    let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(0.0));
     let target_entropy = config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
-    let mut alpha_opt = nn::Adam::default().build(&alpha_vs, config.alpha_lr)?;
+    let mut alpha_opt = adam(&config).build(&alpha_vs, config.alpha_lr)?;
 
     let actor_vs = nn::VarStore::new(get_device());
     let critic1_vs = nn::VarStore::new(get_device());
@@ -387,9 +389,9 @@ fn train_vectorized() -> Result<(), TchError> {
     target_critic1_vs.copy(&critic1_vs)?;
     target_critic2_vs.copy(&critic2_vs)?;
 
-    let mut actor_opt = nn::Adam::default().build(&actor_vs, config.learning_rate)?;
-    let mut critic1_opt = nn::Adam::default().build(&critic1_vs, config.learning_rate)?;
-    let mut critic2_opt = nn::Adam::default().build(&critic2_vs, config.learning_rate)?;
+    let mut actor_opt = adam(&config).build(&actor_vs, config.learning_rate)?;
+    let mut critic1_opt = adam(&config).build(&critic1_vs, config.learning_rate)?;
+    let mut critic2_opt = adam(&config).build(&critic2_vs, config.learning_rate)?;
 
     let mut replay_buffer = ReplayBuffer::new(config.buffer_size);
     let mut last_100_solves = [false; 100];
@@ -413,12 +415,16 @@ fn train_vectorized() -> Result<(), TchError> {
         get_device()
     );
     println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | bootstrap truncations: {} | update every: {} | learning starts: {} | envs: {} | curriculum threshold: {}%",
+        "logs: {} | nets: {} | target entropy: {:.4} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%",
         config.log_dir.display(),
         config.net_dir.display(),
         target_entropy,
+        config.alpha_lr,
+        config.adam_eps,
+        config.tau,
         config.bootstrap_truncations,
         config.update_every,
+        config.target_network_frequency,
         config.learning_starts,
         config.num_envs,
         config.curriculum_threshold,
@@ -495,11 +501,6 @@ fn train_vectorized() -> Result<(), TchError> {
                     &critic2,
                     &target_critic1,
                     &target_critic2,
-                    &actor_vs,
-                    &critic1_vs,
-                    &critic2_vs,
-                    &mut target_critic1_vs,
-                    &mut target_critic2_vs,
                     &mut actor_opt,
                     &mut critic1_opt,
                     &mut critic2_opt,
@@ -507,6 +508,18 @@ fn train_vectorized() -> Result<(), TchError> {
                     &mut alpha_opt,
                 ));
                 learner_updates += 1;
+            }
+
+            if env_steps > config.learning_starts
+                && env_steps % config.target_network_frequency == 0
+            {
+                update_target_networks(
+                    &config,
+                    &critic1_vs,
+                    &critic2_vs,
+                    &mut target_critic1_vs,
+                    &mut target_critic2_vs,
+                );
             }
 
             if !done {
@@ -664,6 +677,16 @@ fn train_vectorized() -> Result<(), TchError> {
                     config.update_every as f32,
                     completed_episodes,
                 );
+                writer.add_scalar(
+                    "config/adam_eps",
+                    config.adam_eps as f32,
+                    completed_episodes,
+                );
+                writer.add_scalar(
+                    "config/target_network_frequency",
+                    config.target_network_frequency as f32,
+                    completed_episodes,
+                );
 
                 println!(
                     "Episode {:6}/{:6} | depth: {:2} | solves: {:2}% | sps: {:7.1} | reward: {:6.2} | actor: {:7.4} | critic: {:7.4} | alpha: {:7.4} | entropy: {:6.4}/{:.4} | pmax: {:.3}",
@@ -724,425 +747,56 @@ fn train_vectorized() -> Result<(), TchError> {
     Ok(())
 }
 
-#[allow(dead_code)]
-fn train() -> Result<(), TchError> {
-    let config = TrainingConfig::from_env();
-    std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
-    std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
-
-    let alpha_vs = nn::VarStore::new(get_device());
-    let log_alpha = alpha_vs.root().var("log_alpha", &[], nn::Init::Const(-2.0));
-    let target_entropy = config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
-    let mut alpha_opt = nn::Adam::default().build(&alpha_vs, config.alpha_lr)?;
-
-    // Initialize models
-    let actor_vs = nn::VarStore::new(get_device());
-    let critic1_vs = nn::VarStore::new(get_device());
-    let critic2_vs = nn::VarStore::new(get_device());
-    let mut target_critic1_vs = nn::VarStore::new(get_device());
-    let mut target_critic2_vs = nn::VarStore::new(get_device());
-
-    let actor = initialize_network(&actor_vs.root());
-    let critic1 = initialize_network(&critic1_vs.root());
-    let critic2 = initialize_network(&critic2_vs.root());
-
-    let target_critic1 = initialize_network(&target_critic1_vs.root());
-    let target_critic2 = initialize_network(&target_critic2_vs.root());
-
-    target_critic1_vs.copy(&critic1_vs)?;
-    target_critic2_vs.copy(&critic2_vs)?;
-
-    let mut actor_opt = nn::Adam::default().build(&actor_vs, config.learning_rate)?;
-    let mut critic1_opt = nn::Adam::default().build(&critic1_vs, config.learning_rate)?;
-    let mut critic2_opt = nn::Adam::default().build(&critic2_vs, config.learning_rate)?;
-
-    // Setup environment
-    let mut cube_env = CubeEnv::new();
-    let mut replay_buffer = ReplayBuffer::new(config.buffer_size);
-    let mut last_100_solves = [false; 100];
-    let mut scramble_depth = 1;
-    let mut episodes_at_depth = 0;
-
-    // Initialize logging
-    println!(
-        "Beginning training run {} for cube of size: {} on device: {:?}",
-        config.run_name,
-        CUBE_SIZE,
-        get_device()
-    );
-    println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | bootstrap truncations: {} | update every: {} | curriculum threshold: {}%",
-        config.log_dir.display(),
-        config.net_dir.display(),
-        target_entropy,
-        config.bootstrap_truncations,
-        config.update_every,
-        config.curriculum_threshold,
-    );
-    let start_time = Instant::now();
-    let mut last_log_time = start_time;
-    let mut last_log_env_steps = 0usize;
-    let log_dir = config.log_dir.to_string_lossy().into_owned();
-    let mut writer = SummaryWriter::new(&log_dir);
-    let mut env_steps = 0;
-    let mut learner_updates = 0usize;
-
-    // Train loop
-    for episode in 0..config.episodes {
-        // Logging variables
-        let mut episode_reward = 0.;
-        let mut critic_episode_loss = 0.;
-        let mut actor_episode_loss = 0.;
-        let mut alpha_episode_loss = 0.;
-        let mut loss_steps = 0;
-        let mut episode_solve = false;
-        let mut episode_truncated = false;
-        let mut episode_entropy = 0.;
-        let mut episode_entropy_error = 0.;
-        let mut episode_policy_max_prob = 0.;
-        let mut episode_target_q = 0.;
-        let mut episode_q1 = 0.;
-        let mut episode_q2 = 0.;
-        let mut episode_replay_truncation = 0.;
-        let mut max_solved_faces;
-
-        // Encode fresh environment
-        let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
-        if recent_solves >= config.curriculum_threshold {
-            scramble_depth += 1;
-            episodes_at_depth = 0;
-            if scramble_depth > config.max_scramble {
-                scramble_depth = config.max_scramble;
-            }
-
-            last_100_solves = [false; 100];
-            println!("Advanced curriculum to depth {scramble_depth}");
-        }
-
-        let max_steps = config.max_steps(scramble_depth);
-        let mut state = cube_env.reset(scramble_depth, max_steps);
-        max_solved_faces = cube_env.get_cube().count_solved_faces();
-
-        for _ in 0..max_steps {
-            let logits = actor.forward(&state.unsqueeze(0)); // [INPUT_SIZE] -> [1, INPUT_SIZE]
-            let probs = logits.softmax(-1, Kind::Float);
-
-            // Fall back to argmax if distribution is degenerate
-            let action = if probs.max().double_value(&[]) > 0.999 {
-                probs.argmax(1, false).int64_value(&[0]) as usize
-            } else {
-                probs.multinomial(1, true).int64_value(&[0]) as usize
-            };
-
-            let step = cube_env.step(action);
-            env_steps += 1;
-            episode_reward += step.reward;
-            episode_solve |= step.terminated;
-            episode_truncated |= step.truncated;
-            let done = step.terminated || step.truncated;
-            max_solved_faces = max_solved_faces.max(cube_env.get_cube().count_solved_faces());
-
-            // Push transition to replay buffer
-            replay_buffer.push(Transition::new(
-                &state,
-                action,
-                step.reward,
-                &step.next_state,
-                step.terminated,
-                step.truncated,
-            ));
-
-            // Move to the next state
-            state = step.next_state;
-
-            // If buffer large enough:
-            if replay_buffer.len() >= config.batch_size && env_steps % config.update_every == 0 {
-                let batch = replay_buffer.sample_tensors(config.batch_size);
-                let states = batch.states;
-                let next_states = batch.next_states;
-                let actions = batch.actions;
-                let rewards = batch.rewards;
-                let terminated = batch.terminated;
-                let truncated = batch.truncated;
-
-                // === CRITIC UPDATE ===
-                // Compute target using actor's current policy and min of target critics
-                let target = tch::no_grad(|| {
-                    let next_logits = actor.forward(&next_states); // [batch, 18]
-                    let next_probs = next_logits.softmax(-1, Kind::Float);
-                    let next_log_probs = next_logits.log_softmax(-1, Kind::Float);
-
-                    let next_q1 = target_critic1.forward(&next_states);
-                    let next_q2 = target_critic2.forward(&next_states);
-                    let next_min_q = next_q1.minimum(&next_q2);
-
-                    // Soft value: expectations over all actions of (Q - alpha * log pi)
-                    let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
-                        .sum_dim_intlist(&[1i64][..], false, Kind::Float); // [batch]
-
-                    let bootstrap = if config.bootstrap_truncations {
-                        1. - &terminated
-                    } else {
-                        1. - terminated.maximum(&truncated)
-                    };
-
-                    &rewards + config.gamma * &next_v * bootstrap // [batch]
-                });
-
-                // Update critic 1
-                let q1 = critic1
-                    .forward(&states)
-                    .gather(1, &actions.unsqueeze(1), false)
-                    .squeeze_dim(1);
-                let critic1_loss = q1.huber_loss(&target, tch::Reduction::Mean, 0.5);
-                critic1_opt.zero_grad();
-                critic1_loss.backward();
-                critic1_vs.trainable_variables().iter().for_each(|v| {
-                    let _ = v.grad().clamp_(-0.5, 0.5);
-                });
-                critic1_opt.step();
-
-                // Update critic 2
-                let q2 = critic2
-                    .forward(&states)
-                    .gather(1, &actions.unsqueeze(1), false)
-                    .squeeze_dim(1);
-                let critic2_loss = q2.huber_loss(&target, tch::Reduction::Mean, 0.5);
-                critic2_opt.zero_grad();
-                critic2_loss.backward();
-                critic2_vs.trainable_variables().iter().for_each(|v| {
-                    let _ = v.grad().clamp_(-0.5, 0.5);
-                });
-                critic2_opt.step();
-
-                // === ACTOR UPDATE ===
-                let logits = actor.forward(&states); // [batch, 18]
-                let probs = logits.softmax(-1, Kind::Float);
-                let log_probs = logits.log_softmax(-1, Kind::Float);
-
-                let q1_detached = tch::no_grad(|| critic1.forward(&states));
-                let q2_detached = tch::no_grad(|| critic2.forward(&states));
-                let q_min = q1_detached.minimum(&q2_detached);
-
-                // Actor loss: wants high Q-values but penalized for being too certain'
-                let alpha = log_alpha.exp();
-                let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
-                    .sum_dim_intlist(&[1i64][..], false, Kind::Float)
-                    .mean(Kind::Float);
-                actor_opt.zero_grad();
-                actor_loss.backward();
-                actor_vs.trainable_variables().iter().for_each(|v| {
-                    let _ = v.grad().clamp_(-0.5, 0.5);
-                });
-                actor_opt.step();
-
-                // === ALPHA UPDATE ===
-                let entropy = tch::no_grad(|| {
-                    let logits = actor.forward(&states);
-                    let probs = logits.softmax(-1, Kind::Float);
-                    let log_probs = logits.log_softmax(-1, Kind::Float);
-                    -(&probs * &log_probs)
-                        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
-                        .mean(Kind::Float)
-                });
-                let entropy_error = &entropy - target_entropy;
-                let alpha_loss = &log_alpha * &entropy_error;
-
-                alpha_opt.zero_grad();
-                alpha_loss.backward();
-                alpha_opt.step();
-
-                // Soft updates
-                tch::no_grad(|| {
-                    for (tp, pp) in target_critic1_vs
-                        .trainable_variables()
-                        .iter_mut()
-                        .zip(critic1_vs.trainable_variables().iter())
-                    {
-                        let updated = pp * config.tau + &*tp * (1. - config.tau);
-                        tp.copy_(&updated);
-                    }
-                    for (tp, pp) in target_critic2_vs
-                        .trainable_variables()
-                        .iter_mut()
-                        .zip(critic2_vs.trainable_variables().iter())
-                    {
-                        let updated = pp * config.tau + &*tp * (1. - config.tau);
-                        tp.copy_(&updated);
-                    }
-                });
-
-                // Logging
-                actor_episode_loss += f32::try_from(&actor_loss).expect("loss calculation failed");
-                critic_episode_loss += f32::try_from(&critic1_loss)
-                    .expect("loss calculation failed")
-                    + f32::try_from(&critic2_loss).expect("loss calculation failed");
-                alpha_episode_loss += f32::try_from(&alpha_loss).expect("loss calculation failed");
-                episode_entropy += f32::try_from(&entropy).expect("entropy calculation failed");
-                episode_entropy_error +=
-                    f32::try_from(&entropy_error).expect("entropy calculation failed");
-                episode_policy_max_prob +=
-                    f32::try_from(&probs.max_dim(1, false).0.mean(Kind::Float))
-                        .expect("policy max probability calculation failed");
-                episode_target_q +=
-                    f32::try_from(&target.mean(Kind::Float)).expect("target calculation failed");
-                episode_q1 += f32::try_from(&q1.mean(Kind::Float)).expect("q1 calculation failed");
-                episode_q2 += f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed");
-                episode_replay_truncation += f32::try_from(&truncated.mean(Kind::Float))
-                    .expect("truncation calculation failed");
-                loss_steps += 1;
-                learner_updates += 1;
-            }
-
-            // If done: reset environment (new scramble)
-            if done {
-                break;
-            }
-        }
-
-        // Logging
-        if loss_steps > 0 && episode % config.log_every == 0 {
-            let now = Instant::now();
-            let elapsed_secs = (now - start_time).as_secs_f32().max(f32::EPSILON);
-            let recent_elapsed_secs = (now - last_log_time).as_secs_f32().max(f32::EPSILON);
-            let sps = env_steps as f32 / elapsed_secs;
-            let recent_sps = (env_steps - last_log_env_steps) as f32 / recent_elapsed_secs;
-            let loss_steps = loss_steps as f32;
-            writer.add_scalar("curriculum/scramble_depth", scramble_depth as f32, episode);
-            writer.add_scalar("curriculum/max_steps", max_steps as f32, episode);
-            writer.add_scalar(
-                "curriculum/replay_size",
-                replay_buffer.len() as f32,
-                episode,
-            );
-            writer.add_scalar("episode/reward", episode_reward, episode);
-            writer.add_scalar(
-                "episode/solve",
-                if episode_solve { 1. } else { 0. },
-                episode,
-            );
-            writer.add_scalar(
-                "episode/truncated",
-                if episode_truncated { 1. } else { 0. },
-                episode,
-            );
-            writer.add_scalar("episode/max_solved_faces", max_solved_faces as f32, episode);
-            writer.add_scalar(
-                "episode/recent_solve_rate",
-                recent_solves as f32 / 100.,
-                episode,
-            );
-            writer.add_scalar(
-                "loss/critic_avg",
-                critic_episode_loss / loss_steps / 2.,
-                episode,
-            );
-            writer.add_scalar("loss/actor", actor_episode_loss / loss_steps, episode);
-            writer.add_scalar("loss/alpha", alpha_episode_loss / loss_steps, episode);
-            writer.add_scalar(
-                "alpha/value",
-                log_alpha.exp().double_value(&[]) as f32,
-                episode,
-            );
-            writer.add_scalar(
-                "alpha/log_value",
-                log_alpha.double_value(&[]) as f32,
-                episode,
-            );
-            writer.add_scalar("entropy/policy", episode_entropy / loss_steps, episode);
-            writer.add_scalar("entropy/target", target_entropy as f32, episode);
-            writer.add_scalar(
-                "entropy/error_policy_minus_target",
-                episode_entropy_error / loss_steps,
-                episode,
-            );
-            writer.add_scalar(
-                "policy/max_probability",
-                episode_policy_max_prob / loss_steps,
-                episode,
-            );
-            writer.add_scalar("q/target", episode_target_q / loss_steps, episode);
-            writer.add_scalar("q/q1_taken", episode_q1 / loss_steps, episode);
-            writer.add_scalar("q/q2_taken", episode_q2 / loss_steps, episode);
-            writer.add_scalar(
-                "replay/truncation_rate",
-                episode_replay_truncation / loss_steps,
-                episode,
-            );
-            writer.add_scalar("performance/sps", sps, episode);
-            writer.add_scalar("performance/recent_sps", recent_sps, episode);
-            writer.add_scalar("performance/env_steps", env_steps as f32, episode);
-            writer.add_scalar(
-                "performance/learner_updates",
-                learner_updates as f32,
-                episode,
-            );
-            writer.add_scalar(
-                "config/bootstrap_truncations",
-                if config.bootstrap_truncations { 1. } else { 0. },
-                episode,
-            );
-            writer.add_scalar("config/update_every", config.update_every as f32, episode);
-
-            println!(
-                "Episode {:6}/{:6} | depth: {:2} | solves: {:2}% | sps: {:7.1} | reward: {:6.2} | actor: {:7.4} | critic: {:7.4} | alpha: {:7.4} | entropy: {:6.4}/{:.4} | pmax: {:.3}",
-                episode + 1,
-                config.episodes,
-                scramble_depth,
-                recent_solves,
-                recent_sps,
-                episode_reward,
-                actor_episode_loss / loss_steps,
-                critic_episode_loss / 2. / loss_steps,
-                log_alpha.exp().double_value(&[]) as f32,
-                episode_entropy / loss_steps,
-                target_entropy,
-                episode_policy_max_prob / loss_steps,
-            );
-            last_log_time = now;
-            last_log_env_steps = env_steps;
-        }
-
-        // Update tracking
-        last_100_solves[episodes_at_depth % 100] = episode_solve;
-        episodes_at_depth += 1;
-
-        // Save to file
-        if episode % config.save_every == 0 {
-            actor_vs.save(config.net_dir.join("actor.ot"))?;
-            critic1_vs.save(config.net_dir.join("critic1.ot"))?;
-            critic2_vs.save(config.net_dir.join("critic2.ot"))?;
-            alpha_vs.save(config.net_dir.join("alpha.ot"))?;
-        }
-    }
-
-    println!(
-        "Finished training in {:.3}ms",
-        (Instant::now() - start_time).as_millis()
-    );
-    Result::Ok(())
+fn relu_sq(xs: &Tensor) -> Tensor {
+    let activated = xs.relu();
+    &activated * &activated
 }
 
-fn initialize_network(vs: &nn::Path) -> nn::Sequential {
-    nn::seq()
-        .add(nn::linear(
-            vs / "layer1",
-            INPUT_SIZE as i64,
-            256,
-            Default::default(),
-        ))
-        .add(nn::layer_norm(vs / "ln1", vec![256], Default::default()))
-        .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer2", 256, 256, Default::default()))
-        .add(nn::layer_norm(vs / "ln2", vec![256], Default::default()))
-        .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs / "layer3", 256, 128, Default::default()))
-        .add(nn::layer_norm(vs / "ln3", vec![128], Default::default()))
-        .add_fn(|xs| xs.relu())
-        .add(nn::linear(
-            vs / "layer4",
-            128,
-            OUTPUT_SIZE as i64,
-            Default::default(),
-        ))
+fn linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+    nn::linear(
+        vs,
+        in_dim,
+        out_dim,
+        nn::LinearConfig {
+            ws_init: nn::init::DEFAULT_KAIMING_NORMAL,
+            bs_init: Some(nn::Init::Const(0.0)),
+            bias: true,
+        },
+    )
+}
+
+#[derive(Debug)]
+struct ResidualBlock {
+    fc1: nn::Linear,
+    fc2: nn::Linear,
+}
+
+#[derive(Debug)]
+struct ResidualNetwork {
+    input: nn::Linear,
+    blocks: [ResidualBlock; 3],
+    head: nn::Linear,
+}
+
+impl Module for ResidualNetwork {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        let mut xs = relu_sq(&self.input.forward(xs));
+        for block in &self.blocks {
+            let residual = xs.shallow_clone();
+            let hidden = relu_sq(&block.fc1.forward(&xs));
+            xs = residual + block.fc2.forward(&hidden);
+        }
+        self.head.forward(&xs)
+    }
+}
+
+fn initialize_network(vs: &nn::Path) -> ResidualNetwork {
+    ResidualNetwork {
+        input: linear(vs / "input", INPUT_SIZE as i64, 256),
+        blocks: std::array::from_fn(|idx| ResidualBlock {
+            fc1: linear(vs / format!("block{idx}_fc1"), 256, 256),
+            fc2: linear(vs / format!("block{idx}_fc2"), 256, 256),
+        }),
+        head: linear(vs / "head", 256, OUTPUT_SIZE as i64),
+    }
 }
