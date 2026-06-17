@@ -38,11 +38,11 @@ impl Loggable for TrainingConfig {
 // --- Episode metrics ------------------------------------
 
 pub struct EpisodeMetrics {
-    pub reward: f32,
-    pub solved: bool,
-    pub truncated: bool,
-    pub max_solved_faces: usize,
-    pub recent_solve_rate: f32,
+    pub(crate) reward: f32,
+    pub(crate) solved: bool,
+    pub(crate) truncated: bool,
+    pub(crate) max_solved_faces: usize,
+    pub(crate) recent_solve_rate: f32,
 }
 
 impl Loggable for EpisodeMetrics {
@@ -60,9 +60,9 @@ impl Loggable for EpisodeMetrics {
 // --- Curriculum metrics ------------------------------------
 
 pub struct CurriculumMetrics {
-    pub scramble_depth: usize,
-    pub max_steps: usize,
-    pub replay_size: usize,
+    pub(crate) scramble_depth: usize,
+    pub(crate) max_steps: usize,
+    pub(crate) replay_size: usize,
 }
 
 impl Loggable for CurriculumMetrics {
@@ -78,10 +78,10 @@ impl Loggable for CurriculumMetrics {
 // --- Performance metrics ------------------------------------
 
 pub struct PerformanceMetrics {
-    pub sps: f32,
-    pub recent_sps: f32,
-    pub env_steps: usize,
-    pub learner_updates: usize,
+    pub(crate) sps: f32,
+    pub(crate) recent_sps: f32,
+    pub(crate) env_steps: usize,
+    pub(crate) learner_updates: usize,
 }
 
 impl Loggable for PerformanceMetrics {
@@ -99,30 +99,30 @@ impl Loggable for PerformanceMetrics {
 
 #[derive(Default)]
 pub struct UpdateMetricTotals {
-    pub actor_loss: f32,
-    pub critic_loss: f32,
-    pub alpha_loss: f32,
-    pub entropy: f32,
-    pub entropy_error: f32,
-    pub policy_max_prob: f32,
-    pub target_q: f32,
-    pub q1: f32,
-    pub q2: f32,
-    pub replay_truncation: f32,
-    pub steps: usize,
+    pub(crate) actor_loss: f32,
+    pub(crate) critic_loss: f32,
+    pub(crate) alpha_loss: f32,
+    pub(crate) entropy: f32,
+    pub(crate) entropy_error: f32,
+    pub(crate) policy_max_prob: f32,
+    pub(crate) target_q: f32,
+    pub(crate) q1: f32,
+    pub(crate) q2: f32,
+    pub(crate) replay_truncation: f32,
+    pub(crate) steps: usize,
 }
 
 pub struct UpdateMetrics {
-    pub actor_loss: f32,
-    pub critic_loss: f32,
-    pub alpha_loss: f32,
-    pub entropy: f32,
-    pub entropy_error: f32,
-    pub policy_max_prob: f32,
-    pub target_q: f32,
-    pub q1: f32,
-    pub q2: f32,
-    pub replay_truncation: f32,
+    pub(crate) actor_loss: f32,
+    pub(crate) critic_loss: f32,
+    pub(crate) alpha_loss: f32,
+    pub(crate) entropy: f32,
+    pub(crate) entropy_error: f32,
+    pub(crate) policy_max_prob: f32,
+    pub(crate) target_q: f32,
+    pub(crate) q1: f32,
+    pub(crate) q2: f32,
+    pub(crate) replay_truncation: f32,
 }
 
 impl UpdateMetricTotals {
@@ -171,9 +171,9 @@ impl Loggable for UpdateMetricTotals {
 // --- Alpha metrics ------------------------------------
 
 pub struct AlphaMetrics {
-    pub value: f32,
-    pub log_value: f32,
-    pub target_entropy: f32,
+    pub(crate) value: f32,
+    pub(crate) log_value: f32,
+    pub(crate) target_entropy: f32,
 }
 
 impl Loggable for AlphaMetrics {
@@ -189,9 +189,9 @@ impl Loggable for AlphaMetrics {
 // --- Eval metrics ------------------------------------
 
 pub struct EvalMetrics {
-    pub solve_rate: f32,
-    pub average_reward: f32,
-    pub average_steps: f32,
+    pub(crate) solve_rate: f32,
+    pub(crate) average_reward: f32,
+    pub(crate) average_steps: f32,
 }
 
 impl Loggable for EvalMetrics {

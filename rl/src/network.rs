@@ -5,12 +5,12 @@ use tch::{
 
 use crate::{INPUT_SIZE, OUTPUT_SIZE};
 
-pub fn relu_sq(xs: &Tensor) -> Tensor {
+fn relu_sq(xs: &Tensor) -> Tensor {
     let activated = xs.relu();
     &activated * &activated
 }
 
-pub fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
+fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
     nn::linear(
         vs,
         in_dim,
@@ -23,15 +23,15 @@ pub fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn:
     )
 }
 
-pub fn hidden_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+fn hidden_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(vs, in_dim, out_dim, nn::init::DEFAULT_KAIMING_NORMAL)
 }
 
-pub fn residual_output_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+fn residual_output_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(vs, in_dim, out_dim, nn::Init::Const(0.0))
 }
 
-pub fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
+fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(
         vs,
         in_dim,
