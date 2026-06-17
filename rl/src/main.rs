@@ -18,7 +18,7 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 use crate::{
     cube_env::{CubeEnv, ReplayBuffer, Transition},
     logging::{
-        AlphaMetrics, CurriculumMetrics, EvalMetrics, Loggable, PerformanceMetrics,
+        AlphaMetrics, CurriculumMetrics, EpisodeMetrics, EvalMetrics, Loggable, PerformanceMetrics,
         UpdateMetricTotals, UpdateMetrics, write_scalars,
     },
 };
@@ -184,8 +184,6 @@ impl fmt::Display for LogSnapshot<'_> {
     }
 }
 
-// ── Env state ─────────────────────────────────────────────────────────────────
-
 struct EpisodeState {
     env: CubeEnv,
     state: Tensor,
@@ -219,8 +217,6 @@ impl EpisodeState {
         self.max_solved_faces = self.env.get_cube().count_solved_faces();
     }
 }
-
-// ── Core logic ────────────────────────────────────────────────────────────────
 
 fn main() {
     let _ = train_vectorized();
