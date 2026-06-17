@@ -66,6 +66,14 @@ impl<const SIZE: usize> Cube<SIZE> {
                 *turn_types.iter().choose(&mut rng).unwrap(),
             ));
         }
+
+        // Make one turn if we accidentally unscrambled the cube (especially likely at lower depth scrambles)
+        if self.is_solved() {
+            self.make_turn(Turn::new(
+                *faces.iter().choose(&mut rng).unwrap(),
+                *turn_types.iter().choose(&mut rng).unwrap(),
+            ));
+        }
     }
 
     /// Applies a single turn to the cube, rotating the face and cycling
