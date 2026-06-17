@@ -1,5 +1,5 @@
 use std::{
-    env,
+    env, fmt,
     path::PathBuf,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -7,6 +7,7 @@ use std::{
 use rand::RngExt;
 
 mod cube_env;
+mod logging;
 
 use tch::{
     Device, Kind, TchError, Tensor,
@@ -14,7 +15,13 @@ use tch::{
 };
 use tensorboard_rs::summary_writer::SummaryWriter;
 
-use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
+use crate::{
+    cube_env::{CubeEnv, ReplayBuffer, Transition},
+    logging::{
+        AlphaMetrics, CurriculumMetrics, EvalMetrics, Loggable, PerformanceMetrics,
+        UpdateMetricTotals, UpdateMetrics, write_scalars,
+    },
+};
 
 // TODO: Train from checkpoints
 // TODO: Seeding for reproducibility
@@ -24,7 +31,7 @@ const CUBE_SIZE: usize = 2;
 const INPUT_SIZE: usize = 6 * CUBE_SIZE * CUBE_SIZE * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
-struct TrainingConfig {
+pub struct TrainingConfig {
     episodes: usize,
     batch_size: usize,
     buffer_size: usize,
@@ -141,6 +148,44 @@ fn env_parse_bool(key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+// ── Console log snapshot ──────────────────────────────────────────────────────
+
+struct LogSnapshot<'a> {
+    completed_episodes: usize,
+    total_episodes: usize,
+    scramble_depth: usize,
+    recent_solves: usize,
+    recent_sps: f32,
+    episode_reward: f32,
+    update_metrics: &'a UpdateMetricTotals,
+    log_alpha: f32,
+    target_entropy: f32,
+}
+
+impl fmt::Display for LogSnapshot<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Episode {:6}/{:6} | depth: {:2} | solves: {:2}% | sps: {:7.1} | reward: {:6.2} | actor: {:7.4} | critic: {:7.4} | alpha: {:7.4} | entropy: {:6.4}/{:.4} | pmax: {:.3}",
+            self.completed_episodes,
+            self.total_episodes,
+            self.scramble_depth,
+            self.recent_solves,
+            self.recent_sps,
+            self.episode_reward,
+            self.update_metrics.average(self.update_metrics.actor_loss),
+            self.update_metrics.average(self.update_metrics.critic_loss) / 2.,
+            self.log_alpha,
+            self.update_metrics.average(self.update_metrics.entropy),
+            self.target_entropy,
+            self.update_metrics
+                .average(self.update_metrics.policy_max_prob),
+        )
+    }
+}
+
+// ── Env state ─────────────────────────────────────────────────────────────────
+
 struct EpisodeState {
     env: CubeEnv,
     state: Tensor,
@@ -175,53 +220,7 @@ impl EpisodeState {
     }
 }
 
-#[derive(Default)]
-struct UpdateMetricTotals {
-    actor_loss: f32,
-    critic_loss: f32,
-    alpha_loss: f32,
-    entropy: f32,
-    entropy_error: f32,
-    policy_max_prob: f32,
-    target_q: f32,
-    q1: f32,
-    q2: f32,
-    replay_truncation: f32,
-    steps: usize,
-}
-
-impl UpdateMetricTotals {
-    fn add(&mut self, metrics: UpdateMetrics) {
-        self.actor_loss += metrics.actor_loss;
-        self.critic_loss += metrics.critic_loss;
-        self.alpha_loss += metrics.alpha_loss;
-        self.entropy += metrics.entropy;
-        self.entropy_error += metrics.entropy_error;
-        self.policy_max_prob += metrics.policy_max_prob;
-        self.target_q += metrics.target_q;
-        self.q1 += metrics.q1;
-        self.q2 += metrics.q2;
-        self.replay_truncation += metrics.replay_truncation;
-        self.steps += 1;
-    }
-
-    fn average(&self, value: f32) -> f32 {
-        value / self.steps as f32
-    }
-}
-
-struct UpdateMetrics {
-    actor_loss: f32,
-    critic_loss: f32,
-    alpha_loss: f32,
-    entropy: f32,
-    entropy_error: f32,
-    policy_max_prob: f32,
-    target_q: f32,
-    q1: f32,
-    q2: f32,
-    replay_truncation: f32,
-}
+// ── Core logic ────────────────────────────────────────────────────────────────
 
 fn main() {
     let _ = train_vectorized();
@@ -373,12 +372,6 @@ fn update_target_networks(
             tp.copy_(&updated);
         }
     });
-}
-
-struct EvalMetrics {
-    solve_rate: f32,
-    average_reward: f32,
-    average_steps: f32,
 }
 
 fn evaluate_greedy(
@@ -598,20 +591,24 @@ fn train_vectorized() -> Result<(), TchError> {
                 continue;
             }
 
-            let episode_reward = episode.reward;
-            let episode_solve = episode.solved;
-            let episode_truncated = episode.truncated;
-            let max_solved_faces = episode.max_solved_faces;
-
-            last_100_solves[episodes_at_depth % 100] = episode_solve;
-            episodes_at_depth += 1;
-            completed_episodes += 1;
-            if !curriculum_active && env_steps > config.learning_starts {
-                curriculum_active = true;
-                episodes_at_depth = 0;
-                last_100_solves = [false; 100];
-            }
-            let recent_solves = last_100_solves.iter().filter(|&&s| s).count();
+            let episode_metrics = EpisodeMetrics {
+                reward: episode.reward,
+                solved: episode.solved,
+                truncated: episode.truncated,
+                max_solved_faces: episode.max_solved_faces,
+                recent_solve_rate: {
+                    last_100_solves[episodes_at_depth % 100] = episode.solved;
+                    episodes_at_depth += 1;
+                    completed_episodes += 1;
+                    if !curriculum_active && env_steps > config.learning_starts {
+                        curriculum_active = true;
+                        episodes_at_depth = 0;
+                        last_100_solves = [false; 100];
+                    }
+                    last_100_solves.iter().filter(|&&s| s).count() as f32 / 100.
+                },
+            };
+            let recent_solves = (episode_metrics.recent_solve_rate * 100.) as usize;
 
             if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
                 let eval_metrics = evaluate_greedy(
@@ -620,223 +617,55 @@ fn train_vectorized() -> Result<(), TchError> {
                     config.max_steps(scramble_depth),
                     config.eval_episodes,
                 );
-                writer.add_scalar(
-                    "eval/greedy_solve_rate",
-                    eval_metrics.solve_rate,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "eval/greedy_average_reward",
-                    eval_metrics.average_reward,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "eval/greedy_average_steps",
-                    eval_metrics.average_steps,
-                    completed_episodes,
-                );
+                write_scalars(&mut writer, &eval_metrics.scalars(), completed_episodes);
             }
 
             if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {
                 let now = Instant::now();
                 let elapsed_secs = (now - start_time).as_secs_f32().max(f32::EPSILON);
                 let recent_elapsed_secs = (now - last_log_time).as_secs_f32().max(f32::EPSILON);
-                let sps = env_steps as f32 / elapsed_secs;
-                let recent_sps = (env_steps - last_log_env_steps) as f32 / recent_elapsed_secs;
 
-                writer.add_scalar(
-                    "curriculum/scramble_depth",
-                    scramble_depth as f32,
+                let perf_metrics = PerformanceMetrics {
+                    sps: env_steps as f32 / elapsed_secs,
+                    recent_sps: (env_steps - last_log_env_steps) as f32 / recent_elapsed_secs,
+                    env_steps,
+                    learner_updates,
+                };
+                let curriculum_metrics = CurriculumMetrics {
+                    scramble_depth,
+                    max_steps: config.max_steps(scramble_depth),
+                    replay_size: replay_buffer.len(),
+                };
+                let alpha_metrics = AlphaMetrics {
+                    value: log_alpha.exp().double_value(&[]) as f32,
+                    log_value: log_alpha.double_value(&[]) as f32,
+                    target_entropy: target_entropy as f32,
+                };
+
+                write_scalars(
+                    &mut writer,
+                    &curriculum_metrics.scalars(),
                     completed_episodes,
                 );
-                writer.add_scalar(
-                    "curriculum/max_steps",
-                    config.max_steps(scramble_depth) as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "curriculum/replay_size",
-                    replay_buffer.len() as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar("episode/reward", episode_reward, completed_episodes);
-                writer.add_scalar(
-                    "episode/solve",
-                    if episode_solve { 1. } else { 0. },
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "episode/truncated",
-                    if episode_truncated { 1. } else { 0. },
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "episode/max_solved_faces",
-                    max_solved_faces as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "episode/recent_solve_rate",
-                    recent_solves as f32 / 100.,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "loss/critic_avg",
-                    update_metrics.average(update_metrics.critic_loss) / 2.,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "loss/actor",
-                    update_metrics.average(update_metrics.actor_loss),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "loss/alpha",
-                    update_metrics.average(update_metrics.alpha_loss),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "alpha/value",
-                    log_alpha.exp().double_value(&[]) as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "alpha/log_value",
-                    log_alpha.double_value(&[]) as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "entropy/policy",
-                    update_metrics.average(update_metrics.entropy),
-                    completed_episodes,
-                );
-                writer.add_scalar("entropy/target", target_entropy as f32, completed_episodes);
-                writer.add_scalar(
-                    "entropy/error_policy_minus_target",
-                    update_metrics.average(update_metrics.entropy_error),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "policy/max_probability",
-                    update_metrics.average(update_metrics.policy_max_prob),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "q/target",
-                    update_metrics.average(update_metrics.target_q),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "q/q1_taken",
-                    update_metrics.average(update_metrics.q1),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "q/q2_taken",
-                    update_metrics.average(update_metrics.q2),
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "replay/truncation_rate",
-                    update_metrics.average(update_metrics.replay_truncation),
-                    completed_episodes,
-                );
-                writer.add_scalar("performance/sps", sps, completed_episodes);
-                writer.add_scalar("performance/recent_sps", recent_sps, completed_episodes);
-                writer.add_scalar(
-                    "performance/env_steps",
-                    env_steps as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "performance/learner_updates",
-                    learner_updates as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/num_envs",
-                    config.num_envs as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/learning_starts",
-                    config.learning_starts as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/bootstrap_truncations",
-                    if config.bootstrap_truncations { 1. } else { 0. },
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/update_every",
-                    config.update_every as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/curriculum_threshold",
-                    config.curriculum_threshold as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/curriculum_min_episodes",
-                    config.curriculum_min_episodes as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/clear_replay_on_advance",
-                    if config.clear_replay_on_advance {
-                        1.
-                    } else {
-                        0.
-                    },
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/eval_episodes",
-                    config.eval_episodes as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/eval_every",
-                    config.eval_every as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/adam_eps",
-                    config.adam_eps as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/target_entropy_scale",
-                    config.target_entropy_scale as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/log_alpha_init",
-                    config.log_alpha_init as f32,
-                    completed_episodes,
-                );
-                writer.add_scalar(
-                    "config/target_network_frequency",
-                    config.target_network_frequency as f32,
-                    completed_episodes,
-                );
+                write_scalars(&mut writer, &episode_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &update_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &alpha_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &perf_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &config.scalars(), completed_episodes);
 
                 println!(
-                    "Episode {:6}/{:6} | depth: {:2} | solves: {:2}% | sps: {:7.1} | reward: {:6.2} | actor: {:7.4} | critic: {:7.4} | alpha: {:7.4} | entropy: {:6.4}/{:.4} | pmax: {:.3}",
-                    completed_episodes,
-                    config.episodes,
-                    scramble_depth,
-                    recent_solves,
-                    recent_sps,
-                    episode_reward,
-                    update_metrics.average(update_metrics.actor_loss),
-                    update_metrics.average(update_metrics.critic_loss) / 2.,
-                    log_alpha.exp().double_value(&[]) as f32,
-                    update_metrics.average(update_metrics.entropy),
-                    target_entropy,
-                    update_metrics.average(update_metrics.policy_max_prob),
+                    "{}",
+                    LogSnapshot {
+                        completed_episodes,
+                        total_episodes: config.episodes,
+                        scramble_depth,
+                        recent_solves,
+                        recent_sps: perf_metrics.recent_sps,
+                        episode_reward: episode_metrics.reward,
+                        update_metrics: &update_metrics,
+                        log_alpha: alpha_metrics.value,
+                        target_entropy: target_entropy as f32,
+                    }
                 );
 
                 update_metrics = UpdateMetricTotals::default();
@@ -886,6 +715,8 @@ fn train_vectorized() -> Result<(), TchError> {
     );
     Ok(())
 }
+
+// ── Network ───────────────────────────────────────────────────────────────────
 
 fn relu_sq(xs: &Tensor) -> Tensor {
     let activated = xs.relu();
