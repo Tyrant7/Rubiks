@@ -1,14 +1,13 @@
+use crate::{INPUT_SIZE, OUTPUT_SIZE};
 use tch::{
     Tensor,
     nn::{self, Module},
 };
 
-use crate::{INPUT_SIZE, OUTPUT_SIZE};
-
-fn relu_sq(xs: &Tensor) -> Tensor {
-    let activated = xs.relu();
-    &activated * &activated
-}
+const HIDDEN: i64 = 256;
+const GROWTH: i64 = 128;
+const LAYERS_PER_BLOCK: usize = 2;
+const NUM_BLOCKS: usize = 3;
 
 fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
     nn::linear(
@@ -27,10 +26,6 @@ fn hidden_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(vs, in_dim, out_dim, nn::init::DEFAULT_KAIMING_NORMAL)
 }
 
-fn residual_output_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
-    linear(vs, in_dim, out_dim, nn::Init::Const(0.0))
-}
-
 fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(
         vs,
@@ -44,37 +39,87 @@ fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
 }
 
 #[derive(Debug)]
-pub struct ResidualBlock {
-    fc1: nn::Linear,
-    fc2: nn::Linear,
+struct DenseLayer {
+    norm: nn::LayerNorm,
+    fc: nn::Linear,
+}
+
+impl DenseLayer {
+    fn new(vs: &nn::Path, in_dim: i64) -> Self {
+        Self {
+            norm: nn::layer_norm(vs / "norm", vec![GROWTH], Default::default()),
+            fc: hidden_linear(vs / "fc", in_dim, GROWTH),
+        }
+    }
+
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        xs.apply(&self.fc).elu().apply(&self.norm)
+    }
 }
 
 #[derive(Debug)]
-pub struct ResidualNetwork {
+struct DenseBlock {
+    layers: Vec<DenseLayer>,
+}
+
+impl DenseBlock {
+    fn new(vs: &nn::Path, in_dim: i64) -> Self {
+        let layers = (0..LAYERS_PER_BLOCK)
+            .map(|i| DenseLayer::new(&(vs / format!("layer{i}")), in_dim + i as i64 * GROWTH))
+            .collect();
+        Self { layers }
+    }
+
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        let mut outputs = vec![xs.shallow_clone()];
+        for layer in &self.layers {
+            let input = Tensor::cat(&outputs, 1);
+            outputs.push(layer.forward(&input));
+        }
+        Tensor::cat(&outputs, 1)
+    }
+
+    fn out_dim(in_dim: i64) -> i64 {
+        in_dim + LAYERS_PER_BLOCK as i64 * GROWTH
+    }
+}
+
+#[derive(Debug)]
+pub struct DenseNetwork {
     input: nn::Linear,
-    blocks: [ResidualBlock; 3],
+    blocks: Vec<DenseBlock>,
+    transitions: Vec<nn::Linear>,
     head: nn::Linear,
 }
 
-impl Module for ResidualNetwork {
+impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut xs = relu_sq(&self.input.forward(xs));
-        for block in &self.blocks {
-            let residual = xs.shallow_clone();
-            let hidden = relu_sq(&block.fc1.forward(&xs));
-            xs = residual + block.fc2.forward(&hidden);
+        let mut xs = self.input.forward(xs).elu();
+        for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
+            xs = transition.forward(&block.forward(&xs)).elu();
         }
         self.head.forward(&xs)
     }
 }
 
-pub fn initialize_network(vs: &nn::Path) -> ResidualNetwork {
-    ResidualNetwork {
-        input: hidden_linear(vs / "input", INPUT_SIZE as i64, 256),
-        blocks: std::array::from_fn(|idx| ResidualBlock {
-            fc1: hidden_linear(vs / format!("block{idx}_fc1"), 256, 256),
-            fc2: residual_output_linear(vs / format!("block{idx}_fc2"), 256, 256),
-        }),
-        head: head_linear(vs / "head", 256, OUTPUT_SIZE as i64),
+pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
+    let block_out_dim = DenseBlock::out_dim(HIDDEN);
+
+    let mut blocks = Vec::with_capacity(NUM_BLOCKS);
+    let mut transitions = Vec::with_capacity(NUM_BLOCKS);
+    for i in 0..NUM_BLOCKS {
+        blocks.push(DenseBlock::new(&(vs / format!("block{i}")), HIDDEN));
+        transitions.push(hidden_linear(
+            vs / format!("transition{i}"),
+            block_out_dim,
+            HIDDEN,
+        ));
+    }
+
+    DenseNetwork {
+        input: hidden_linear(vs / "input", INPUT_SIZE as i64, HIDDEN),
+        blocks,
+        transitions,
+        head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE as i64),
     }
 }

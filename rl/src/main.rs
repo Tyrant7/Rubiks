@@ -22,7 +22,7 @@ use crate::{
         AlphaMetrics, CurriculumMetrics, EpisodeMetrics, EvalMetrics, Loggable, PerformanceMetrics,
         UpdateMetricTotals, UpdateMetrics, write_scalars,
     },
-    network::{ResidualNetwork, initialize_network},
+    network::{DenseNetwork, initialize_network},
 };
 
 // TODO: Train from checkpoints
@@ -235,11 +235,11 @@ fn sac_update(
     config: &TrainingConfig,
     target_entropy: f64,
     replay_buffer: &ReplayBuffer,
-    actor: &ResidualNetwork,
-    critic1: &ResidualNetwork,
-    critic2: &ResidualNetwork,
-    target_critic1: &ResidualNetwork,
-    target_critic2: &ResidualNetwork,
+    actor: &DenseNetwork,
+    critic1: &DenseNetwork,
+    critic2: &DenseNetwork,
+    target_critic1: &DenseNetwork,
+    target_critic2: &DenseNetwork,
     actor_opt: &mut nn::Optimizer,
     critic1_opt: &mut nn::Optimizer,
     critic2_opt: &mut nn::Optimizer,
@@ -371,7 +371,7 @@ fn update_target_networks(
 }
 
 fn evaluate_greedy(
-    actor: &ResidualNetwork,
+    actor: &DenseNetwork,
     scramble_depth: usize,
     max_steps: usize,
     episodes: usize,
