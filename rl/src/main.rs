@@ -6,7 +6,6 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
     cube_env::CubeEnv,
-    logging::{EvalMetrics, Loggable, write_scalars},
     sac::{TrainingConfig, train_vectorized},
 };
 
@@ -74,14 +73,29 @@ pub fn evaluate_model(
     // Perform a fixed seeded evaluation test for models
     let mut rng = StdRng::seed_from_u64(42);
     for depth in [5, 8, 11] {
-        let eval = evaluate_greedy(
+        let (solve_rate, avg_reward, avg_steps) = evaluate_greedy(
             model,
             &mut rng,
             depth,
             config.max_steps(depth),
             config.eval_episodes,
         );
-        write_scalars(writer, &eval.scalars(), episode);
+
+        writer.add_scalar(
+            &format!("eval/depth_{}/greedy_solve_rate", depth),
+            solve_rate,
+            episode,
+        );
+        writer.add_scalar(
+            &format!("eval/depth_{}/greedy_average_reward", depth),
+            avg_reward,
+            episode,
+        );
+        writer.add_scalar(
+            &format!("eval/depth_{}/greedy_average_steps", depth),
+            avg_steps,
+            episode,
+        );
     }
 }
 
@@ -91,7 +105,7 @@ fn evaluate_greedy(
     scramble_depth: usize,
     max_steps: usize,
     episodes: usize,
-) -> EvalMetrics {
+) -> (f32, f32, f32) {
     let mut solves = 0usize;
     let mut total_reward = 0f32;
     let mut total_steps = 0usize;
@@ -126,9 +140,9 @@ fn evaluate_greedy(
         }
     }
 
-    EvalMetrics {
-        solve_rate: solves as f32 / 100.,
-        average_reward: total_reward / episodes as f32,
-        average_steps: total_steps as f32 / episodes as f32,
-    }
+    (
+        solves as f32 / episodes as f32,
+        total_reward / episodes as f32,
+        total_steps as f32 / episodes as f32,
+    )
 }
