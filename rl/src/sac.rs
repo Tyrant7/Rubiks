@@ -439,7 +439,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             let recent_solves = (episode_metrics.recent_solve_rate * 100.) as usize;
 
             if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
-                evaluate_model(&actor, &config, &mut writer, completed_episodes);
+                evaluate_model(&actor, config, &mut writer, completed_episodes);
             }
 
             if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {
