@@ -1,8 +1,4 @@
-use std::{
-    env, fmt,
-    path::PathBuf,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{fmt, time::Instant};
 pub mod network;
 pub mod sac_logging;
 
@@ -15,7 +11,8 @@ use tch::{
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
-    CUBE_SIZE, OUTPUT_SIZE, env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
+    CUBE_SIZE, OUTPUT_SIZE, TrainingConfig, env_parse, env_parse_bool, env_parse_clamped,
+    env_parse_min, get_device,
 };
 use crate::{
     cube_env::{CubeEnv, ReplayBuffer, Transition},
@@ -29,85 +26,47 @@ use crate::sac::sac_logging::{
     UpdateMetrics,
 };
 
-pub struct TrainingConfig {
-    episodes: usize,
-    batch_size: usize,
+pub struct SacConfig {
+    // Replay buffer
     buffer_size: usize,
+    batch_size: usize,
+    // Optimizer
     learning_rate: f64,
     alpha_lr: f64,
-    tau: f64,
+    adam_eps: f64,
+    // TD learning
     gamma: f64,
-    max_steps_cap: usize,
-    min_steps: usize,
-    max_scramble: usize,
-    curriculum_threshold: usize,
-    curriculum_min_episodes: usize,
+    tau: f64,
+    // Entropy / alpha
     target_entropy_scale: f64,
     log_alpha_init: f64,
-    bootstrap_truncations: bool,
-    clear_replay_on_advance: bool,
+    // Update schedule
     update_every: usize,
     target_network_frequency: usize,
-    adam_eps: f64,
-    learning_starts: usize,
-    num_envs: usize,
-    eval_every: usize,
-    pub eval_episodes: usize,
-    log_every: usize,
-    save_every: usize,
-    run_name: String,
-    log_dir: PathBuf,
-    net_dir: PathBuf,
+    // Curriculum
+    curriculum_threshold: usize,
+    curriculum_min_episodes: usize,
+    clear_replay_on_advance: bool,
 }
 
-impl TrainingConfig {
+impl SacConfig {
     fn from_env() -> Self {
-        let run_name = env::var("RL_RUN_NAME").unwrap_or_else(|_| {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock is before unix epoch")
-                .as_secs();
-            format!("run-{now}")
-        });
-        let log_root = env::var("RL_LOG_ROOT").unwrap_or_else(|_| "./rl/logs".to_string());
-        let net_root = env::var("RL_NET_ROOT").unwrap_or_else(|_| "./rl/nets".to_string());
-        let min_steps = env_parse_min("RL_MIN_STEPS", 3, 1);
-        let max_steps_cap = env_parse_min("RL_MAX_STEPS_CAP", 40, min_steps);
-
         Self {
-            episodes: env_parse_min("RL_EPISODES", 50_000, 1),
-            batch_size: env_parse_min("RL_BATCH_SIZE", 256, 1),
             buffer_size: env_parse_min("RL_BUFFER_SIZE", 200_000, 1),
+            batch_size: env_parse_min("RL_BATCH_SIZE", 256, 1),
             learning_rate: env_parse("RL_LEARNING_RATE", 3e-4),
             alpha_lr: env_parse("RL_ALPHA_LR", 3e-4),
-            tau: env_parse("RL_TAU", 1.0),
+            adam_eps: env_parse("RL_ADAM_EPS", 1e-4),
             gamma: env_parse("RL_GAMMA", 0.99),
-            max_steps_cap,
-            min_steps,
-            max_scramble: env_parse_min("RL_MAX_SCRAMBLE", 20, 1),
-            curriculum_threshold: env_parse_clamped("RL_CURRICULUM_THRESHOLD", 10, 1, 100),
-            curriculum_min_episodes: env_parse_min("RL_CURRICULUM_MIN_EPISODES", 1, 1),
+            tau: env_parse("RL_TAU", 1.0),
             target_entropy_scale: env_parse("RL_TARGET_ENTROPY_SCALE", 0.2),
             log_alpha_init: env_parse("RL_LOG_ALPHA_INIT", -2.0),
-            bootstrap_truncations: env_parse_bool("RL_BOOTSTRAP_TRUNCATIONS", true),
-            clear_replay_on_advance: env_parse_bool("RL_CLEAR_REPLAY_ON_ADVANCE", false),
             update_every: env_parse_min("RL_UPDATE_EVERY", 4, 1),
             target_network_frequency: env_parse_min("RL_TARGET_NETWORK_FREQUENCY", 8_000, 1),
-            adam_eps: env_parse("RL_ADAM_EPS", 1e-4),
-            learning_starts: env_parse("RL_LEARNING_STARTS", 5_000),
-            num_envs: env_parse_min("RL_NUM_ENVS", 16, 1),
-            eval_every: env_parse("RL_EVAL_EVERY", 0),
-            eval_episodes: env_parse_min("RL_EVAL_EPISODES", 64, 1),
-            log_every: env_parse_min("RL_LOG_EVERY", 1, 1),
-            save_every: env_parse_min("RL_SAVE_EVERY", 100, 1),
-            log_dir: PathBuf::from(log_root).join(&run_name),
-            net_dir: PathBuf::from(net_root).join(&run_name),
-            run_name,
+            curriculum_threshold: env_parse_clamped("RL_CURRICULUM_THRESHOLD", 10, 1, 100),
+            curriculum_min_episodes: env_parse_min("RL_CURRICULUM_MIN_EPISODES", 1, 1),
+            clear_replay_on_advance: env_parse_bool("RL_CLEAR_REPLAY_ON_ADVANCE", false),
         }
-    }
-
-    pub fn max_steps(&self, scramble_depth: usize) -> usize {
-        (scramble_depth * 3).clamp(self.min_steps, self.max_steps_cap)
     }
 }
 
@@ -179,13 +138,13 @@ impl EpisodeState {
     }
 }
 
-fn adam(config: &TrainingConfig) -> nn::Adam {
+fn adam(config: &SacConfig) -> nn::Adam {
     nn::Adam::default().eps(config.adam_eps)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn sac_update(
-    config: &TrainingConfig,
+    config: &SacConfig,
     target_entropy: f64,
     replay_buffer: &ReplayBuffer,
     actor: &DenseNetwork,
@@ -219,13 +178,7 @@ fn sac_update(
         let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
             .sum_dim_intlist(&[1i64][..], false, Kind::Float);
 
-        let bootstrap = if config.bootstrap_truncations {
-            1. - &terminated
-        } else {
-            1. - terminated.maximum(&truncated)
-        };
-
-        &rewards + config.gamma * &next_v * bootstrap
+        &rewards + config.gamma * &next_v * (1. - &terminated)
     });
 
     let q1 = critic1
@@ -296,17 +249,18 @@ fn sac_update(
     }
 }
 
-pub fn train_vectorized() -> Result<(), TchError> {
-    let config = TrainingConfig::from_env();
+pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
+    let sac_config = SacConfig::from_env();
     std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
     std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
 
     let alpha_vs = nn::VarStore::new(get_device());
-    let log_alpha = alpha_vs
-        .root()
-        .var("log_alpha", &[], nn::Init::Const(config.log_alpha_init));
-    let target_entropy = config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
-    let mut alpha_opt = adam(&config).build(&alpha_vs, config.alpha_lr)?;
+    let log_alpha =
+        alpha_vs
+            .root()
+            .var("log_alpha", &[], nn::Init::Const(sac_config.log_alpha_init));
+    let target_entropy = sac_config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
+    let mut alpha_opt = adam(&sac_config).build(&alpha_vs, sac_config.alpha_lr)?;
 
     let actor_vs = nn::VarStore::new(get_device());
     let critic1_vs = nn::VarStore::new(get_device());
@@ -323,11 +277,11 @@ pub fn train_vectorized() -> Result<(), TchError> {
     target_critic1_vs.copy(&critic1_vs)?;
     target_critic2_vs.copy(&critic2_vs)?;
 
-    let mut actor_opt = adam(&config).build(&actor_vs, config.learning_rate)?;
-    let mut critic1_opt = adam(&config).build(&critic1_vs, config.learning_rate)?;
-    let mut critic2_opt = adam(&config).build(&critic2_vs, config.learning_rate)?;
+    let mut actor_opt = adam(&sac_config).build(&actor_vs, sac_config.learning_rate)?;
+    let mut critic1_opt = adam(&sac_config).build(&critic1_vs, sac_config.learning_rate)?;
+    let mut critic2_opt = adam(&sac_config).build(&critic2_vs, sac_config.learning_rate)?;
 
-    let mut replay_buffer = ReplayBuffer::new(config.buffer_size);
+    let mut replay_buffer = ReplayBuffer::new(sac_config.buffer_size);
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1usize;
     let mut episodes_at_depth = 0usize;
@@ -349,23 +303,22 @@ pub fn train_vectorized() -> Result<(), TchError> {
         get_device()
     );
     println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
+        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
         config.log_dir.display(),
         config.net_dir.display(),
         target_entropy,
-        config.target_entropy_scale,
-        config.log_alpha_init,
-        config.alpha_lr,
-        config.adam_eps,
-        config.tau,
-        config.bootstrap_truncations,
-        config.update_every,
-        config.target_network_frequency,
+        sac_config.target_entropy_scale,
+        sac_config.log_alpha_init,
+        sac_config.alpha_lr,
+        sac_config.adam_eps,
+        sac_config.tau,
+        sac_config.update_every,
+        sac_config.target_network_frequency,
         config.learning_starts,
         config.num_envs,
-        config.curriculum_threshold,
-        config.curriculum_min_episodes,
-        config.clear_replay_on_advance,
+        sac_config.curriculum_threshold,
+        sac_config.curriculum_min_episodes,
+        sac_config.clear_replay_on_advance,
         config.eval_every,
         config.eval_episodes,
     );
@@ -429,11 +382,11 @@ pub fn train_vectorized() -> Result<(), TchError> {
             episode.state = step.next_state;
 
             if env_steps > config.learning_starts
-                && replay_buffer.len() >= config.batch_size
-                && env_steps.is_multiple_of(config.update_every)
+                && replay_buffer.len() >= sac_config.batch_size
+                && env_steps.is_multiple_of(sac_config.update_every)
             {
                 update_metrics.add(sac_update(
-                    &config,
+                    &sac_config,
                     target_entropy,
                     &replay_buffer,
                     &actor,
@@ -451,10 +404,10 @@ pub fn train_vectorized() -> Result<(), TchError> {
             }
 
             if env_steps > config.learning_starts
-                && env_steps.is_multiple_of(config.target_network_frequency)
+                && env_steps.is_multiple_of(sac_config.target_network_frequency)
             {
                 update_target_networks(
-                    &config,
+                    &sac_config,
                     &critic1_vs,
                     &critic2_vs,
                     &mut target_critic1_vs,
@@ -520,6 +473,7 @@ pub fn train_vectorized() -> Result<(), TchError> {
                 write_scalars(&mut writer, &update_metrics.scalars(), completed_episodes);
                 write_scalars(&mut writer, &alpha_metrics.scalars(), completed_episodes);
                 write_scalars(&mut writer, &perf_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &sac_config.scalars(), completed_episodes);
                 write_scalars(&mut writer, &config.scalars(), completed_episodes);
 
                 println!(
@@ -550,14 +504,14 @@ pub fn train_vectorized() -> Result<(), TchError> {
             }
 
             if curriculum_active
-                && recent_solves >= config.curriculum_threshold
-                && episodes_at_depth >= config.curriculum_min_episodes
+                && recent_solves >= sac_config.curriculum_threshold
+                && episodes_at_depth >= sac_config.curriculum_min_episodes
                 && scramble_depth < config.max_scramble
             {
                 scramble_depth += 1;
                 episodes_at_depth = 0;
                 last_100_solves = [false; 100];
-                if config.clear_replay_on_advance {
+                if sac_config.clear_replay_on_advance {
                     replay_buffer.clear();
                     update_metrics = UpdateMetricTotals::default();
                 }
@@ -586,7 +540,7 @@ pub fn train_vectorized() -> Result<(), TchError> {
 }
 
 fn update_target_networks(
-    config: &TrainingConfig,
+    sac_config: &SacConfig,
     critic1_vs: &nn::VarStore,
     critic2_vs: &nn::VarStore,
     target_critic1_vs: &mut nn::VarStore,
@@ -598,7 +552,7 @@ fn update_target_networks(
             .iter_mut()
             .zip(critic1_vs.trainable_variables().iter())
         {
-            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            let updated = pp * sac_config.tau + &*tp * (1. - sac_config.tau);
             tp.copy_(&updated);
         }
         for (tp, pp) in target_critic2_vs
@@ -606,7 +560,7 @@ fn update_target_networks(
             .iter_mut()
             .zip(critic2_vs.trainable_variables().iter())
         {
-            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            let updated = pp * sac_config.tau + &*tp * (1. - sac_config.tau);
             tp.copy_(&updated);
         }
     });

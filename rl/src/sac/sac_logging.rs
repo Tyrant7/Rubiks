@@ -1,24 +1,19 @@
-use crate::{logging::Loggable, sac::TrainingConfig};
+use crate::{logging::Loggable, sac::SacConfig};
 
 // --- Config ------------------------------------
 
 #[rustfmt::skip]
-impl Loggable for TrainingConfig {
+impl Loggable for SacConfig {
     fn scalars(&self) -> Vec<(&'static str, f32)> {
         vec![
-            ("config/num_envs",                    self.num_envs as f32),
-            ("config/learning_starts",             self.learning_starts as f32),
-            ("config/bootstrap_truncations",       self.bootstrap_truncations as u8 as f32),
-            ("config/update_every",                self.update_every as f32),
-            ("config/curriculum_threshold",        self.curriculum_threshold as f32),
-            ("config/curriculum_min_episodes",     self.curriculum_min_episodes as f32),
-            ("config/clear_replay_on_advance",     self.clear_replay_on_advance as u8 as f32),
-            ("config/eval_episodes",               self.eval_episodes as f32),
-            ("config/eval_every",                  self.eval_every as f32),
-            ("config/adam_eps",                    self.adam_eps as f32),
-            ("config/target_entropy_scale",        self.target_entropy_scale as f32),
-            ("config/log_alpha_init",              self.log_alpha_init as f32),
-            ("config/target_network_frequency",    self.target_network_frequency as f32),
+            ("sac/update_every",                self.update_every as f32),
+            ("sac/curriculum_threshold",        self.curriculum_threshold as f32),
+            ("sac/curriculum_min_episodes",     self.curriculum_min_episodes as f32),
+            ("sac/clear_replay_on_advance",     self.clear_replay_on_advance as u8 as f32),
+            ("sac/adam_eps",                    self.adam_eps as f32),
+            ("sac/target_entropy_scale",        self.target_entropy_scale as f32),
+            ("sac/log_alpha_init",              self.log_alpha_init as f32),
+            ("sac/target_network_frequency",    self.target_network_frequency as f32),
         ]
     }
 }

@@ -1,13 +1,14 @@
-use std::env;
+use std::{
+    env,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use tch::{Device, nn::Module};
 use tensorboard_rs::summary_writer::SummaryWriter;
 
-use crate::{
-    cube_env::CubeEnv,
-    sac::{TrainingConfig, train_vectorized},
-};
+use crate::{cube_env::CubeEnv, sac::train_vectorized};
 
 mod cube_env;
 mod logging;
@@ -22,7 +23,63 @@ const OUTPUT_SIZE: usize = 6 * 3;
 // TODO: README file and TODO file
 
 fn main() {
-    let _ = train_vectorized();
+    let _ = train_vectorized(&TrainingConfig::from_env());
+}
+
+pub struct TrainingConfig {
+    // Run identity
+    run_name: String,
+    log_dir: PathBuf,
+    net_dir: PathBuf,
+    // Episode structure
+    episodes: usize,
+    num_envs: usize,
+    learning_starts: usize,
+    min_steps: usize,
+    max_steps_cap: usize,
+    max_scramble: usize,
+    // Evaluation
+    eval_every: usize,
+    eval_episodes: usize,
+    // Logging & saving
+    log_every: usize,
+    save_every: usize,
+}
+
+impl TrainingConfig {
+    fn from_env() -> Self {
+        let run_name = env::var("RL_RUN_NAME").unwrap_or_else(|_| {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is before unix epoch")
+                .as_secs();
+            format!("run-{now}")
+        });
+        let log_root = env::var("RL_LOG_ROOT").unwrap_or_else(|_| "./rl/logs".to_string());
+        let net_root = env::var("RL_NET_ROOT").unwrap_or_else(|_| "./rl/nets".to_string());
+        let min_steps = env_parse_min("RL_MIN_STEPS", 3, 1);
+        let max_steps_cap = env_parse_min("RL_MAX_STEPS_CAP", 40, min_steps);
+
+        Self {
+            run_name: run_name.clone(),
+            log_dir: PathBuf::from(log_root).join(&run_name),
+            net_dir: PathBuf::from(net_root).join(&run_name),
+            episodes: env_parse_min("RL_EPISODES", 50_000, 1),
+            num_envs: env_parse_min("RL_NUM_ENVS", 16, 1),
+            learning_starts: env_parse("RL_LEARNING_STARTS", 5_000),
+            min_steps,
+            max_steps_cap,
+            max_scramble: env_parse_min("RL_MAX_SCRAMBLE", 20, 1),
+            eval_every: env_parse("RL_EVAL_EVERY", 0),
+            eval_episodes: env_parse_min("RL_EVAL_EPISODES", 64, 1),
+            log_every: env_parse_min("RL_LOG_EVERY", 1, 1),
+            save_every: env_parse_min("RL_SAVE_EVERY", 100, 1),
+        }
+    }
+
+    pub fn max_steps(&self, scramble_depth: usize) -> usize {
+        (scramble_depth * 3).clamp(self.min_steps, self.max_steps_cap)
+    }
 }
 
 fn env_parse<T>(key: &str, default: T) -> T
