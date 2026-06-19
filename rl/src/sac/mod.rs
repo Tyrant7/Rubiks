@@ -1,0 +1,667 @@
+use std::{
+    env, fmt,
+    path::PathBuf,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
+pub mod network;
+pub mod sac_logging;
+
+use rand::RngExt;
+
+use tch::{
+    Kind, TchError, Tensor,
+    nn::{self, Module, OptimizerConfig},
+};
+use tensorboard_rs::summary_writer::SummaryWriter;
+
+use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
+use crate::{
+    CUBE_SIZE, OUTPUT_SIZE, env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
+};
+
+use crate::logging::{Loggable, write_scalars};
+use crate::sac::network::{DenseNetwork, initialize_network};
+use crate::sac::sac_logging::{
+    AlphaMetrics, CurriculumMetrics, EpisodeMetrics, EvalMetrics, PerformanceMetrics,
+    UpdateMetricTotals, UpdateMetrics,
+};
+
+// TODO: Train from checkpoints
+// TODO: Seeding for reproducibility
+// TODO: README file and TODO file
+
+pub struct TrainingConfig {
+    episodes: usize,
+    batch_size: usize,
+    buffer_size: usize,
+    learning_rate: f64,
+    alpha_lr: f64,
+    tau: f64,
+    gamma: f64,
+    max_steps_cap: usize,
+    min_steps: usize,
+    max_scramble: usize,
+    curriculum_threshold: usize,
+    curriculum_min_episodes: usize,
+    target_entropy_scale: f64,
+    log_alpha_init: f64,
+    bootstrap_truncations: bool,
+    clear_replay_on_advance: bool,
+    update_every: usize,
+    target_network_frequency: usize,
+    adam_eps: f64,
+    learning_starts: usize,
+    num_envs: usize,
+    eval_every: usize,
+    eval_episodes: usize,
+    log_every: usize,
+    save_every: usize,
+    run_name: String,
+    log_dir: PathBuf,
+    net_dir: PathBuf,
+}
+
+impl TrainingConfig {
+    fn from_env() -> Self {
+        let run_name = env::var("RL_RUN_NAME").unwrap_or_else(|_| {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is before unix epoch")
+                .as_secs();
+            format!("run-{now}")
+        });
+        let log_root = env::var("RL_LOG_ROOT").unwrap_or_else(|_| "./rl/logs".to_string());
+        let net_root = env::var("RL_NET_ROOT").unwrap_or_else(|_| "./rl/nets".to_string());
+        let min_steps = env_parse_min("RL_MIN_STEPS", 3, 1);
+        let max_steps_cap = env_parse_min("RL_MAX_STEPS_CAP", 40, min_steps);
+
+        Self {
+            episodes: env_parse_min("RL_EPISODES", 50_000, 1),
+            batch_size: env_parse_min("RL_BATCH_SIZE", 256, 1),
+            buffer_size: env_parse_min("RL_BUFFER_SIZE", 200_000, 1),
+            learning_rate: env_parse("RL_LEARNING_RATE", 3e-4),
+            alpha_lr: env_parse("RL_ALPHA_LR", 3e-4),
+            tau: env_parse("RL_TAU", 1.0),
+            gamma: env_parse("RL_GAMMA", 0.99),
+            max_steps_cap,
+            min_steps,
+            max_scramble: env_parse_min("RL_MAX_SCRAMBLE", 20, 1),
+            curriculum_threshold: env_parse_clamped("RL_CURRICULUM_THRESHOLD", 10, 1, 100),
+            curriculum_min_episodes: env_parse_min("RL_CURRICULUM_MIN_EPISODES", 1, 1),
+            target_entropy_scale: env_parse("RL_TARGET_ENTROPY_SCALE", 0.2),
+            log_alpha_init: env_parse("RL_LOG_ALPHA_INIT", -2.0),
+            bootstrap_truncations: env_parse_bool("RL_BOOTSTRAP_TRUNCATIONS", true),
+            clear_replay_on_advance: env_parse_bool("RL_CLEAR_REPLAY_ON_ADVANCE", false),
+            update_every: env_parse_min("RL_UPDATE_EVERY", 4, 1),
+            target_network_frequency: env_parse_min("RL_TARGET_NETWORK_FREQUENCY", 8_000, 1),
+            adam_eps: env_parse("RL_ADAM_EPS", 1e-4),
+            learning_starts: env_parse("RL_LEARNING_STARTS", 5_000),
+            num_envs: env_parse_min("RL_NUM_ENVS", 16, 1),
+            eval_every: env_parse("RL_EVAL_EVERY", 0),
+            eval_episodes: env_parse_min("RL_EVAL_EPISODES", 64, 1),
+            log_every: env_parse_min("RL_LOG_EVERY", 1, 1),
+            save_every: env_parse_min("RL_SAVE_EVERY", 100, 1),
+            log_dir: PathBuf::from(log_root).join(&run_name),
+            net_dir: PathBuf::from(net_root).join(&run_name),
+            run_name,
+        }
+    }
+
+    fn max_steps(&self, scramble_depth: usize) -> usize {
+        (scramble_depth * 3).clamp(self.min_steps, self.max_steps_cap)
+    }
+}
+
+struct LogSnapshot<'a> {
+    completed_episodes: usize,
+    total_episodes: usize,
+    scramble_depth: usize,
+    recent_solves: usize,
+    recent_sps: f32,
+    episode_reward: f32,
+    update_metrics: &'a UpdateMetricTotals,
+    log_alpha: f32,
+    target_entropy: f32,
+}
+
+impl fmt::Display for LogSnapshot<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Episode {:6}/{:6} | depth: {:2} | solves: {:2}% | sps: {:7.1} | reward: {:6.2} | actor: {:7.4} | critic: {:7.4} | alpha: {:7.4} | entropy: {:6.4}/{:.4} | pmax: {:.3}",
+            self.completed_episodes,
+            self.total_episodes,
+            self.scramble_depth,
+            self.recent_solves,
+            self.recent_sps,
+            self.episode_reward,
+            self.update_metrics.average(self.update_metrics.actor_loss),
+            self.update_metrics.average(self.update_metrics.critic_loss) / 2.,
+            self.log_alpha,
+            self.update_metrics.average(self.update_metrics.entropy),
+            self.target_entropy,
+            self.update_metrics
+                .average(self.update_metrics.policy_max_prob),
+        )
+    }
+}
+
+struct EpisodeState {
+    env: CubeEnv,
+    state: Tensor,
+    reward: f32,
+    solved: bool,
+    truncated: bool,
+    max_solved_faces: usize,
+}
+
+impl EpisodeState {
+    fn new(scramble_depth: usize, max_steps: usize) -> Self {
+        let mut env = CubeEnv::new();
+        let state = env.reset(scramble_depth, max_steps);
+        let max_solved_faces = env.get_cube().count_solved_faces();
+
+        Self {
+            env,
+            state,
+            reward: 0.,
+            solved: false,
+            truncated: false,
+            max_solved_faces,
+        }
+    }
+
+    fn reset(&mut self, scramble_depth: usize, max_steps: usize) {
+        self.state = self.env.reset(scramble_depth, max_steps);
+        self.reward = 0.;
+        self.solved = false;
+        self.truncated = false;
+        self.max_solved_faces = self.env.get_cube().count_solved_faces();
+    }
+}
+
+fn adam(config: &TrainingConfig) -> nn::Adam {
+    nn::Adam::default().eps(config.adam_eps)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sac_update(
+    config: &TrainingConfig,
+    target_entropy: f64,
+    replay_buffer: &ReplayBuffer,
+    actor: &DenseNetwork,
+    critic1: &DenseNetwork,
+    critic2: &DenseNetwork,
+    target_critic1: &DenseNetwork,
+    target_critic2: &DenseNetwork,
+    actor_opt: &mut nn::Optimizer,
+    critic1_opt: &mut nn::Optimizer,
+    critic2_opt: &mut nn::Optimizer,
+    log_alpha: &Tensor,
+    alpha_opt: &mut nn::Optimizer,
+) -> UpdateMetrics {
+    let batch = replay_buffer.sample_tensors(config.batch_size);
+    let states = batch.states;
+    let next_states = batch.next_states;
+    let actions = batch.actions;
+    let rewards = batch.rewards;
+    let terminated = batch.terminated;
+    let truncated = batch.truncated;
+
+    let target = tch::no_grad(|| {
+        let next_logits = actor.forward(&next_states);
+        let next_probs = next_logits.softmax(-1, Kind::Float);
+        let next_log_probs = next_logits.log_softmax(-1, Kind::Float);
+
+        let next_q1 = target_critic1.forward(&next_states);
+        let next_q2 = target_critic2.forward(&next_states);
+        let next_min_q = next_q1.minimum(&next_q2);
+
+        let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
+            .sum_dim_intlist(&[1i64][..], false, Kind::Float);
+
+        let bootstrap = if config.bootstrap_truncations {
+            1. - &terminated
+        } else {
+            1. - terminated.maximum(&truncated)
+        };
+
+        &rewards + config.gamma * &next_v * bootstrap
+    });
+
+    let q1 = critic1
+        .forward(&states)
+        .gather(1, &actions.unsqueeze(1), false)
+        .squeeze_dim(1);
+    let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
+    critic1_opt.zero_grad();
+    critic1_loss.backward();
+    critic1_opt.step();
+
+    let q2 = critic2
+        .forward(&states)
+        .gather(1, &actions.unsqueeze(1), false)
+        .squeeze_dim(1);
+    let critic2_loss = q2.mse_loss(&target, tch::Reduction::Mean);
+    critic2_opt.zero_grad();
+    critic2_loss.backward();
+    critic2_opt.step();
+
+    let logits = actor.forward(&states);
+    let probs = logits.softmax(-1, Kind::Float);
+    let log_probs = logits.log_softmax(-1, Kind::Float);
+
+    let q1_detached = tch::no_grad(|| critic1.forward(&states));
+    let q2_detached = tch::no_grad(|| critic2.forward(&states));
+    let q_min = q1_detached.minimum(&q2_detached);
+
+    let alpha = log_alpha.exp();
+    let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
+        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+        .mean(Kind::Float);
+    actor_opt.zero_grad();
+    actor_loss.backward();
+    actor_opt.step();
+
+    let entropy = tch::no_grad(|| {
+        let logits = actor.forward(&states);
+        let probs = logits.softmax(-1, Kind::Float);
+        let log_probs = logits.log_softmax(-1, Kind::Float);
+        -(&probs * &log_probs)
+            .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+            .mean(Kind::Float)
+    });
+    let entropy_error = &entropy - target_entropy;
+    let alpha_loss = (&probs.detach() * (-log_alpha * (&log_probs + target_entropy).detach()))
+        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+        .mean(Kind::Float);
+
+    alpha_opt.zero_grad();
+    alpha_loss.backward();
+    alpha_opt.step();
+
+    UpdateMetrics {
+        actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
+        critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
+            + f32::try_from(&critic2_loss).expect("loss calculation failed"),
+        alpha_loss: f32::try_from(&alpha_loss).expect("loss calculation failed"),
+        entropy: f32::try_from(&entropy).expect("entropy calculation failed"),
+        entropy_error: f32::try_from(&entropy_error).expect("entropy calculation failed"),
+        policy_max_prob: f32::try_from(&probs.max_dim(1, false).0.mean(Kind::Float))
+            .expect("policy max probability calculation failed"),
+        target_q: f32::try_from(&target.mean(Kind::Float)).expect("target calculation failed"),
+        q1: f32::try_from(&q1.mean(Kind::Float)).expect("q1 calculation failed"),
+        q2: f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed"),
+        replay_truncation: f32::try_from(&truncated.mean(Kind::Float))
+            .expect("truncation calculation failed"),
+    }
+}
+
+fn update_target_networks(
+    config: &TrainingConfig,
+    critic1_vs: &nn::VarStore,
+    critic2_vs: &nn::VarStore,
+    target_critic1_vs: &mut nn::VarStore,
+    target_critic2_vs: &mut nn::VarStore,
+) {
+    tch::no_grad(|| {
+        for (tp, pp) in target_critic1_vs
+            .trainable_variables()
+            .iter_mut()
+            .zip(critic1_vs.trainable_variables().iter())
+        {
+            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            tp.copy_(&updated);
+        }
+        for (tp, pp) in target_critic2_vs
+            .trainable_variables()
+            .iter_mut()
+            .zip(critic2_vs.trainable_variables().iter())
+        {
+            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            tp.copy_(&updated);
+        }
+    });
+}
+
+fn evaluate_greedy(
+    actor: &DenseNetwork,
+    scramble_depth: usize,
+    max_steps: usize,
+    episodes: usize,
+) -> EvalMetrics {
+    let mut env = CubeEnv::new();
+    let mut solves = 0usize;
+    let mut total_reward = 0f32;
+    let mut total_steps = 0usize;
+
+    for _ in 0..episodes {
+        let mut state = env.reset(scramble_depth, max_steps);
+
+        for step_idx in 1..=max_steps {
+            let action = tch::no_grad(|| {
+                actor
+                    .forward(&state.unsqueeze(0))
+                    .argmax(1, false)
+                    .int64_value(&[0]) as usize
+            });
+            let step = env.step(action);
+            total_reward += step.reward;
+            total_steps += 1;
+            state = step.next_state;
+
+            if step.terminated {
+                solves += 1;
+                break;
+            }
+            if step.truncated {
+                break;
+            }
+
+            if step_idx == max_steps {
+                break;
+            }
+        }
+    }
+
+    EvalMetrics {
+        solve_rate: solves as f32 / episodes as f32,
+        average_reward: total_reward / episodes as f32,
+        average_steps: total_steps as f32 / episodes as f32,
+    }
+}
+
+pub fn train_vectorized() -> Result<(), TchError> {
+    let config = TrainingConfig::from_env();
+    std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
+    std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
+
+    let alpha_vs = nn::VarStore::new(get_device());
+    let log_alpha = alpha_vs
+        .root()
+        .var("log_alpha", &[], nn::Init::Const(config.log_alpha_init));
+    let target_entropy = config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
+    let mut alpha_opt = adam(&config).build(&alpha_vs, config.alpha_lr)?;
+
+    let actor_vs = nn::VarStore::new(get_device());
+    let critic1_vs = nn::VarStore::new(get_device());
+    let critic2_vs = nn::VarStore::new(get_device());
+    let mut target_critic1_vs = nn::VarStore::new(get_device());
+    let mut target_critic2_vs = nn::VarStore::new(get_device());
+
+    let actor = initialize_network(&actor_vs.root());
+    let critic1 = initialize_network(&critic1_vs.root());
+    let critic2 = initialize_network(&critic2_vs.root());
+    let target_critic1 = initialize_network(&target_critic1_vs.root());
+    let target_critic2 = initialize_network(&target_critic2_vs.root());
+
+    target_critic1_vs.copy(&critic1_vs)?;
+    target_critic2_vs.copy(&critic2_vs)?;
+
+    let mut actor_opt = adam(&config).build(&actor_vs, config.learning_rate)?;
+    let mut critic1_opt = adam(&config).build(&critic1_vs, config.learning_rate)?;
+    let mut critic2_opt = adam(&config).build(&critic2_vs, config.learning_rate)?;
+
+    let mut replay_buffer = ReplayBuffer::new(config.buffer_size);
+    let mut last_100_solves = [false; 100];
+    let mut scramble_depth = 1usize;
+    let mut episodes_at_depth = 0usize;
+    let mut completed_episodes = 0usize;
+    let mut env_steps = 0usize;
+    let mut learner_updates = 0usize;
+    let mut curriculum_active = config.learning_starts == 0;
+    let mut update_metrics = UpdateMetricTotals::default();
+
+    let max_steps = config.max_steps(scramble_depth);
+    let mut envs = (0..config.num_envs)
+        .map(|_| EpisodeState::new(scramble_depth, max_steps))
+        .collect::<Vec<_>>();
+
+    println!(
+        "Beginning training run {} for cube of size: {} on device: {:?}",
+        config.run_name,
+        CUBE_SIZE,
+        get_device()
+    );
+    println!(
+        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | bootstrap truncations: {} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
+        config.log_dir.display(),
+        config.net_dir.display(),
+        target_entropy,
+        config.target_entropy_scale,
+        config.log_alpha_init,
+        config.alpha_lr,
+        config.adam_eps,
+        config.tau,
+        config.bootstrap_truncations,
+        config.update_every,
+        config.target_network_frequency,
+        config.learning_starts,
+        config.num_envs,
+        config.curriculum_threshold,
+        config.curriculum_min_episodes,
+        config.clear_replay_on_advance,
+        config.eval_every,
+        config.eval_episodes,
+    );
+
+    let start_time = Instant::now();
+    let mut last_log_time = start_time;
+    let mut last_log_env_steps = 0usize;
+    let log_dir = config.log_dir.to_string_lossy().into_owned();
+    let mut writer = SummaryWriter::new(&log_dir);
+    let mut rng = rand::rng();
+
+    while completed_episodes < config.episodes {
+        let actions = if env_steps < config.learning_starts {
+            Tensor::from_slice(
+                &(0..envs.len())
+                    .map(|_| rng.random_range(0..OUTPUT_SIZE) as i64)
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            let states = Tensor::stack(
+                &envs
+                    .iter()
+                    .map(|episode| episode.state.shallow_clone())
+                    .collect::<Vec<_>>(),
+                0,
+            );
+            actor
+                .forward(&states)
+                .softmax(-1, Kind::Float)
+                .multinomial(1, true)
+                .squeeze_dim(1)
+        };
+
+        for env_idx in 0..envs.len() {
+            if completed_episodes >= config.episodes {
+                break;
+            }
+
+            let action = actions.int64_value(&[env_idx as i64]) as usize;
+            let episode = &mut envs[env_idx];
+            let previous_state = episode.state.shallow_clone();
+            let step = episode.env.step(action);
+            let done = step.terminated || step.truncated;
+
+            env_steps += 1;
+            episode.reward += step.reward;
+            episode.solved |= step.terminated;
+            episode.truncated |= step.truncated;
+            episode.max_solved_faces = episode
+                .max_solved_faces
+                .max(episode.env.get_cube().count_solved_faces());
+
+            replay_buffer.push(Transition::new(
+                &previous_state,
+                action,
+                step.reward,
+                &step.next_state,
+                step.terminated,
+                step.truncated,
+            ));
+            episode.state = step.next_state;
+
+            if env_steps > config.learning_starts
+                && replay_buffer.len() >= config.batch_size
+                && env_steps.is_multiple_of(config.update_every)
+            {
+                update_metrics.add(sac_update(
+                    &config,
+                    target_entropy,
+                    &replay_buffer,
+                    &actor,
+                    &critic1,
+                    &critic2,
+                    &target_critic1,
+                    &target_critic2,
+                    &mut actor_opt,
+                    &mut critic1_opt,
+                    &mut critic2_opt,
+                    &log_alpha,
+                    &mut alpha_opt,
+                ));
+                learner_updates += 1;
+            }
+
+            if env_steps > config.learning_starts
+                && env_steps.is_multiple_of(config.target_network_frequency)
+            {
+                update_target_networks(
+                    &config,
+                    &critic1_vs,
+                    &critic2_vs,
+                    &mut target_critic1_vs,
+                    &mut target_critic2_vs,
+                );
+            }
+
+            if !done {
+                continue;
+            }
+
+            let episode_metrics = EpisodeMetrics {
+                reward: episode.reward,
+                solved: episode.solved,
+                truncated: episode.truncated,
+                max_solved_faces: episode.max_solved_faces,
+                recent_solve_rate: {
+                    last_100_solves[episodes_at_depth % 100] = episode.solved;
+                    episodes_at_depth += 1;
+                    completed_episodes += 1;
+                    if !curriculum_active && env_steps > config.learning_starts {
+                        curriculum_active = true;
+                        episodes_at_depth = 0;
+                        last_100_solves = [false; 100];
+                    }
+                    last_100_solves.iter().filter(|&&s| s).count() as f32 / 100.
+                },
+            };
+            let recent_solves = (episode_metrics.recent_solve_rate * 100.) as usize;
+
+            if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
+                let eval_metrics = evaluate_greedy(
+                    &actor,
+                    scramble_depth,
+                    config.max_steps(scramble_depth),
+                    config.eval_episodes,
+                );
+                write_scalars(&mut writer, &eval_metrics.scalars(), completed_episodes);
+            }
+
+            if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {
+                let now = Instant::now();
+                let elapsed_secs = (now - start_time).as_secs_f32().max(f32::EPSILON);
+                let recent_elapsed_secs = (now - last_log_time).as_secs_f32().max(f32::EPSILON);
+
+                let perf_metrics = PerformanceMetrics {
+                    sps: env_steps as f32 / elapsed_secs,
+                    recent_sps: (env_steps - last_log_env_steps) as f32 / recent_elapsed_secs,
+                    env_steps,
+                    learner_updates,
+                };
+                let curriculum_metrics = CurriculumMetrics {
+                    scramble_depth,
+                    max_steps: config.max_steps(scramble_depth),
+                    replay_size: replay_buffer.len(),
+                };
+                let alpha_metrics = AlphaMetrics {
+                    value: log_alpha.exp().double_value(&[]) as f32,
+                    log_value: log_alpha.double_value(&[]) as f32,
+                    target_entropy: target_entropy as f32,
+                };
+
+                write_scalars(
+                    &mut writer,
+                    &curriculum_metrics.scalars(),
+                    completed_episodes,
+                );
+                write_scalars(&mut writer, &episode_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &update_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &alpha_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &perf_metrics.scalars(), completed_episodes);
+                write_scalars(&mut writer, &config.scalars(), completed_episodes);
+
+                println!(
+                    "{}",
+                    LogSnapshot {
+                        completed_episodes,
+                        total_episodes: config.episodes,
+                        scramble_depth,
+                        recent_solves,
+                        recent_sps: perf_metrics.recent_sps,
+                        episode_reward: episode_metrics.reward,
+                        update_metrics: &update_metrics,
+                        log_alpha: alpha_metrics.value,
+                        target_entropy: target_entropy as f32,
+                    }
+                );
+
+                update_metrics = UpdateMetricTotals::default();
+                last_log_time = now;
+                last_log_env_steps = env_steps;
+            }
+
+            if completed_episodes.is_multiple_of(config.save_every) {
+                actor_vs.save(config.net_dir.join("actor.ot"))?;
+                critic1_vs.save(config.net_dir.join("critic1.ot"))?;
+                critic2_vs.save(config.net_dir.join("critic2.ot"))?;
+                alpha_vs.save(config.net_dir.join("alpha.ot"))?;
+            }
+
+            if curriculum_active
+                && recent_solves >= config.curriculum_threshold
+                && episodes_at_depth >= config.curriculum_min_episodes
+                && scramble_depth < config.max_scramble
+            {
+                scramble_depth += 1;
+                episodes_at_depth = 0;
+                last_100_solves = [false; 100];
+                if config.clear_replay_on_advance {
+                    replay_buffer.clear();
+                    update_metrics = UpdateMetricTotals::default();
+                }
+                println!("Advanced curriculum to depth {scramble_depth}");
+
+                let max_steps = config.max_steps(scramble_depth);
+                for episode in &mut envs {
+                    episode.reset(scramble_depth, max_steps);
+                }
+            } else {
+                envs[env_idx].reset(scramble_depth, config.max_steps(scramble_depth));
+            }
+        }
+    }
+
+    actor_vs.save(config.net_dir.join("actor.ot"))?;
+    critic1_vs.save(config.net_dir.join("critic1.ot"))?;
+    critic2_vs.save(config.net_dir.join("critic2.ot"))?;
+    alpha_vs.save(config.net_dir.join("alpha.ot"))?;
+
+    println!(
+        "Finished training in {:.3}ms",
+        (Instant::now() - start_time).as_millis()
+    );
+    Ok(())
+}
