@@ -14,16 +14,19 @@ use tch::{
 };
 use tensorboard_rs::summary_writer::SummaryWriter;
 
-use crate::cube_env::{CubeEnv, ReplayBuffer, Transition};
 use crate::{
     CUBE_SIZE, OUTPUT_SIZE, env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
+};
+use crate::{
+    cube_env::{CubeEnv, ReplayBuffer, Transition},
+    evaluate_model,
 };
 
 use crate::logging::{Loggable, write_scalars};
 use crate::sac::network::{DenseNetwork, initialize_network};
 use crate::sac::sac_logging::{
-    AlphaMetrics, CurriculumMetrics, EpisodeMetrics, EvalMetrics, PerformanceMetrics,
-    UpdateMetricTotals, UpdateMetrics,
+    AlphaMetrics, CurriculumMetrics, EpisodeMetrics, PerformanceMetrics, UpdateMetricTotals,
+    UpdateMetrics,
 };
 
 pub struct TrainingConfig {
@@ -49,7 +52,7 @@ pub struct TrainingConfig {
     learning_starts: usize,
     num_envs: usize,
     eval_every: usize,
-    eval_episodes: usize,
+    pub eval_episodes: usize,
     log_every: usize,
     save_every: usize,
     run_name: String,
@@ -103,7 +106,7 @@ impl TrainingConfig {
         }
     }
 
-    fn max_steps(&self, scramble_depth: usize) -> usize {
+    pub fn max_steps(&self, scramble_depth: usize) -> usize {
         (scramble_depth * 3).clamp(self.min_steps, self.max_steps_cap)
     }
 }
@@ -483,13 +486,7 @@ pub fn train_vectorized() -> Result<(), TchError> {
             let recent_solves = (episode_metrics.recent_solve_rate * 100.) as usize;
 
             if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
-                let eval_metrics = evaluate_greedy(
-                    &actor,
-                    scramble_depth,
-                    config.max_steps(scramble_depth),
-                    config.eval_episodes,
-                );
-                write_scalars(&mut writer, &eval_metrics.scalars(), completed_episodes);
+                evaluate_model(&actor, &config, &mut writer, completed_episodes);
             }
 
             if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {

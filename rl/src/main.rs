@@ -1,9 +1,14 @@
-use std::{array, env};
+use std::env;
 
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use tch::{Device, nn::Module};
+use tensorboard_rs::summary_writer::SummaryWriter;
 
-use crate::{cube_env::CubeEnv, sac::train_vectorized};
+use crate::{
+    cube_env::CubeEnv,
+    logging::{EvalMetrics, Loggable, write_scalars},
+    sac::{TrainingConfig, train_vectorized},
+};
 
 mod cube_env;
 mod logging;
@@ -13,8 +18,8 @@ const CUBE_SIZE: usize = 2;
 const INPUT_SIZE: usize = 6 * CUBE_SIZE * CUBE_SIZE * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
+// TODO: break TrainingConfig into main config and SAC config structs
 // TODO: Train from checkpoints
-// TODO: Seeding for reproducibility
 // TODO: README file and TODO file
 
 fn main() {
@@ -60,23 +65,44 @@ pub fn get_device() -> Device {
     Device::cuda_if_available()
 }
 
-pub fn evaluate_model(model: &impl Module, model_name: &str) {
+pub fn evaluate_model(
+    model: &impl Module,
+    config: &TrainingConfig,
+    writer: &mut SummaryWriter,
+    episode: usize,
+) {
     // Perform a fixed seeded evaluation test for models
-    let rng = StdRng::from_seed([42u8; 32]);
-    let envs: [CubeEnv; 100] = array::from_fn(|_| CubeEnv::new());
+    let mut rng = StdRng::seed_from_u64(42);
+    for depth in [5, 8, 11] {
+        let eval = evaluate_greedy(
+            model,
+            &mut rng,
+            depth,
+            config.max_steps(depth),
+            config.eval_episodes,
+        );
+        write_scalars(writer, &eval.scalars(), episode);
+    }
 }
 
-fn evaluate_greedy(model: &impl Module, envs: &[CubeEnv; 100]) {
+fn evaluate_greedy(
+    model: &impl Module,
+    rng: &mut StdRng,
+    scramble_depth: usize,
+    max_steps: usize,
+    episodes: usize,
+) -> EvalMetrics {
     let mut solves = 0usize;
     let mut total_reward = 0f32;
     let mut total_steps = 0usize;
+    let mut env = CubeEnv::new();
 
     for _ in 0..episodes {
-        let mut state = env.reset(scramble_depth, max_steps);
+        let mut state = env.seeded_reset(scramble_depth, max_steps, rng.next_u64());
 
         for step_idx in 1..=max_steps {
             let action = tch::no_grad(|| {
-                actor
+                model
                     .forward(&state.unsqueeze(0))
                     .argmax(1, false)
                     .int64_value(&[0]) as usize
@@ -98,5 +124,11 @@ fn evaluate_greedy(model: &impl Module, envs: &[CubeEnv; 100]) {
                 break;
             }
         }
+    }
+
+    EvalMetrics {
+        solve_rate: solves as f32 / 100.,
+        average_reward: total_reward / episodes as f32,
+        average_steps: total_steps as f32 / episodes as f32,
     }
 }

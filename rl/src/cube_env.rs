@@ -83,17 +83,20 @@ impl CubeEnv {
         }
     }
 
-    pub fn from_seed() -> Self {}
+    /// Performs a seeded scramble on this environment's cube and returns the associated state
+    pub fn seeded_reset(&mut self, moves: usize, max_steps: usize, seed: u64) -> Tensor {
+        self.cube = Cube::default();
+        self.cube
+            .scramble(moves, rubiks::ScrambleType::Seeded(seed));
+        self.steps = 0;
+        self.max_steps = max_steps;
+        encode_cube(&self.cube)
+    }
 
     /// Scrambles this environment's cube and returns the associated state
     pub fn reset(&mut self, moves: usize, max_steps: usize) -> Tensor {
-        loop {
-            self.cube = Cube::default();
-            self.cube.scramble(moves, rubiks::ScrambleType::Random);
-            if moves == 0 || !self.cube.is_solved() {
-                break;
-            }
-        }
+        self.cube = Cube::default();
+        self.cube.scramble(moves, rubiks::ScrambleType::Random);
         self.steps = 0;
         self.max_steps = max_steps;
         encode_cube(&self.cube)
