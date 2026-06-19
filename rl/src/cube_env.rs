@@ -83,6 +83,8 @@ impl CubeEnv {
         }
     }
 
+    pub fn from_seed() -> Self {}
+
     /// Scrambles this environment's cube and returns the associated state
     pub fn reset(&mut self, moves: usize, max_steps: usize) -> Tensor {
         loop {

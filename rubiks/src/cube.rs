@@ -60,19 +60,15 @@ impl<const SIZE: usize> Cube<SIZE> {
             TurnType::CounterClockwise,
             TurnType::Half,
         ];
-        for _ in 0..moves {
-            self.make_turn(Turn::new(
-                *faces.iter().choose(&mut rng).unwrap(),
-                *turn_types.iter().choose(&mut rng).unwrap(),
-            ));
-        }
 
-        // Make one turn if we accidentally unscrambled the cube (especially likely at lower depth scrambles)
-        if self.is_solved() {
-            self.make_turn(Turn::new(
-                *faces.iter().choose(&mut rng).unwrap(),
-                *turn_types.iter().choose(&mut rng).unwrap(),
-            ));
+        // If we accidentally scrambled into a solved cube we'll scramble again
+        while moves > 0 && self.is_solved() {
+            for _ in 0..moves {
+                self.make_turn(Turn::new(
+                    *faces.iter().choose(&mut rng).unwrap(),
+                    *turn_types.iter().choose(&mut rng).unwrap(),
+                ));
+            }
         }
     }
 
