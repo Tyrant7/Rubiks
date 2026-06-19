@@ -114,7 +114,7 @@ fn evaluate_greedy(
     for _ in 0..episodes {
         let mut state = env.seeded_reset(scramble_depth, max_steps, rng.next_u64());
 
-        for step_idx in 1..=max_steps {
+        for _ in 1..=max_steps {
             let action = tch::no_grad(|| {
                 model
                     .forward(&state.unsqueeze(0))
@@ -131,10 +131,6 @@ fn evaluate_greedy(
                 break;
             }
             if step.truncated {
-                break;
-            }
-
-            if step_idx == max_steps {
                 break;
             }
         }
