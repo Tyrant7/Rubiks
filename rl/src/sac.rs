@@ -26,10 +26,6 @@ use crate::sac::sac_logging::{
     UpdateMetricTotals, UpdateMetrics,
 };
 
-// TODO: Train from checkpoints
-// TODO: Seeding for reproducibility
-// TODO: README file and TODO file
-
 pub struct TrainingConfig {
     episodes: usize,
     batch_size: usize,
@@ -294,80 +290,6 @@ fn sac_update(
         q2: f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed"),
         replay_truncation: f32::try_from(&truncated.mean(Kind::Float))
             .expect("truncation calculation failed"),
-    }
-}
-
-fn update_target_networks(
-    config: &TrainingConfig,
-    critic1_vs: &nn::VarStore,
-    critic2_vs: &nn::VarStore,
-    target_critic1_vs: &mut nn::VarStore,
-    target_critic2_vs: &mut nn::VarStore,
-) {
-    tch::no_grad(|| {
-        for (tp, pp) in target_critic1_vs
-            .trainable_variables()
-            .iter_mut()
-            .zip(critic1_vs.trainable_variables().iter())
-        {
-            let updated = pp * config.tau + &*tp * (1. - config.tau);
-            tp.copy_(&updated);
-        }
-        for (tp, pp) in target_critic2_vs
-            .trainable_variables()
-            .iter_mut()
-            .zip(critic2_vs.trainable_variables().iter())
-        {
-            let updated = pp * config.tau + &*tp * (1. - config.tau);
-            tp.copy_(&updated);
-        }
-    });
-}
-
-fn evaluate_greedy(
-    actor: &DenseNetwork,
-    scramble_depth: usize,
-    max_steps: usize,
-    episodes: usize,
-) -> EvalMetrics {
-    let mut env = CubeEnv::new();
-    let mut solves = 0usize;
-    let mut total_reward = 0f32;
-    let mut total_steps = 0usize;
-
-    for _ in 0..episodes {
-        let mut state = env.reset(scramble_depth, max_steps);
-
-        for step_idx in 1..=max_steps {
-            let action = tch::no_grad(|| {
-                actor
-                    .forward(&state.unsqueeze(0))
-                    .argmax(1, false)
-                    .int64_value(&[0]) as usize
-            });
-            let step = env.step(action);
-            total_reward += step.reward;
-            total_steps += 1;
-            state = step.next_state;
-
-            if step.terminated {
-                solves += 1;
-                break;
-            }
-            if step.truncated {
-                break;
-            }
-
-            if step_idx == max_steps {
-                break;
-            }
-        }
-    }
-
-    EvalMetrics {
-        solve_rate: solves as f32 / episodes as f32,
-        average_reward: total_reward / episodes as f32,
-        average_steps: total_steps as f32 / episodes as f32,
     }
 }
 
@@ -664,4 +586,31 @@ pub fn train_vectorized() -> Result<(), TchError> {
         (Instant::now() - start_time).as_millis()
     );
     Ok(())
+}
+
+fn update_target_networks(
+    config: &TrainingConfig,
+    critic1_vs: &nn::VarStore,
+    critic2_vs: &nn::VarStore,
+    target_critic1_vs: &mut nn::VarStore,
+    target_critic2_vs: &mut nn::VarStore,
+) {
+    tch::no_grad(|| {
+        for (tp, pp) in target_critic1_vs
+            .trainable_variables()
+            .iter_mut()
+            .zip(critic1_vs.trainable_variables().iter())
+        {
+            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            tp.copy_(&updated);
+        }
+        for (tp, pp) in target_critic2_vs
+            .trainable_variables()
+            .iter_mut()
+            .zip(critic2_vs.trainable_variables().iter())
+        {
+            let updated = pp * config.tau + &*tp * (1. - config.tau);
+            tp.copy_(&updated);
+        }
+    });
 }
