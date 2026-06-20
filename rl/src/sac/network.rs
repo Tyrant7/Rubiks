@@ -4,8 +4,8 @@ use tch::{
     nn::{self, Module},
 };
 
-const HIDDEN: i64 = 256;
-const GROWTH: i64 = 128;
+const HIDDEN: i64 = 512;
+const GROWTH: i64 = 256;
 const LAYERS_PER_BLOCK: usize = 2;
 const NUM_BLOCKS: usize = 3;
 

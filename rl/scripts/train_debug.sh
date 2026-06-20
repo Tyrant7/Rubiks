@@ -20,10 +20,10 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-debug-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-densenet_wide-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
-export RL_EPISODES="${RL_EPISODES:-20000}"
+export RL_EPISODES="${RL_EPISODES:-10000}"
 export RL_NUM_ENVS="${RL_NUM_ENVS:-16}"
 export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-5000}"
 
