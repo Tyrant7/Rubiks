@@ -18,10 +18,6 @@ const CUBE_SIZE: usize = 2;
 const INPUT_SIZE: usize = 6 * CUBE_SIZE * CUBE_SIZE * 6;
 const OUTPUT_SIZE: usize = 6 * 3;
 
-// TODO: break TrainingConfig into main config and SAC config structs
-// TODO: Train from checkpoints
-// TODO: README file and TODO file
-
 fn main() {
     let _ = train_vectorized(&TrainingConfig::from_env());
 }
