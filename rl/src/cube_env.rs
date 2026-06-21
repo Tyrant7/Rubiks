@@ -2,12 +2,12 @@ use rand::seq::IndexedRandom;
 use rubiks::{Cube, FaceType, Turn, TurnType};
 use tch::Tensor;
 
-use crate::{CUBE_SIZE, INPUT_SIZE, get_device};
+use crate::{CUBE_SIZE, get_device};
 
 /// Generates a one-hot encoding for the given cube of dimensions
 /// faces * width * height * colour
 fn encode_cube(cube: &Cube<CUBE_SIZE>) -> Tensor {
-    let mut data = Vec::with_capacity(INPUT_SIZE);
+    let mut data = Vec::with_capacity(6 * CUBE_SIZE * CUBE_SIZE * 6);
 
     for face in cube.get_faces() {
         for row in 0..CUBE_SIZE {

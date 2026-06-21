@@ -11,7 +11,7 @@ use tch::{
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
-    CUBE_SIZE, OUTPUT_SIZE, TrainingConfig, env_parse, env_parse_bool, env_parse_clamped,
+    ACTIONS, CUBE_SIZE, TrainingConfig, env_parse, env_parse_bool, env_parse_clamped,
     env_parse_min, get_device,
 };
 use crate::{
@@ -259,7 +259,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         alpha_vs
             .root()
             .var("log_alpha", &[], nn::Init::Const(sac_config.log_alpha_init));
-    let target_entropy = sac_config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
+    let target_entropy = sac_config.target_entropy_scale * (ACTIONS as f64).ln();
     let mut alpha_opt = adam(&sac_config).build(&alpha_vs, sac_config.alpha_lr)?;
 
     let actor_vs = nn::VarStore::new(get_device());
@@ -334,7 +334,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         let actions = if env_steps < config.learning_starts {
             Tensor::from_slice(
                 &(0..envs.len())
-                    .map(|_| rng.random_range(0..OUTPUT_SIZE) as i64)
+                    .map(|_| rng.random_range(0..ACTIONS) as i64)
                     .collect::<Vec<_>>(),
             )
         } else {
