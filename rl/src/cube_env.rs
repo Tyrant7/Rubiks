@@ -4,14 +4,18 @@ use tch::Tensor;
 
 use crate::{CUBE_SIZE, INPUT_SIZE, get_device};
 
-/// Returns a vector containing the colour for each tile in order
-fn encode_cube_indices(cube: &Cube<CUBE_SIZE>) -> Tensor {
+/// Generates a one-hot encoding for the given cube of dimensions
+/// faces * width * height * colour
+fn encode_cube(cube: &Cube<CUBE_SIZE>) -> Tensor {
     let mut data = Vec::with_capacity(INPUT_SIZE);
 
     for face in cube.get_faces() {
         for row in 0..CUBE_SIZE {
             for col in 0..CUBE_SIZE {
-                data.push(face.get_tile_colour(row, col) as i64);
+                let colour_idx = face.get_tile_colour(row, col) as usize;
+                for c in 0..6 {
+                    data.push(if c == colour_idx { 1.0f32 } else { 0.0 });
+                }
             }
         }
     }
@@ -86,7 +90,7 @@ impl CubeEnv {
             .scramble(moves, rubiks::ScrambleType::Seeded(seed));
         self.steps = 0;
         self.max_steps = max_steps;
-        encode_cube_indices(&self.cube)
+        encode_cube(&self.cube)
     }
 
     /// Scrambles this environment's cube and returns the associated state
@@ -95,7 +99,7 @@ impl CubeEnv {
         self.cube.scramble(moves, rubiks::ScrambleType::Random);
         self.steps = 0;
         self.max_steps = max_steps;
-        encode_cube_indices(&self.cube)
+        encode_cube(&self.cube)
     }
 
     /// Apply a turn and report true terminals separately from time-limit truncation.
@@ -105,7 +109,7 @@ impl CubeEnv {
         self.steps += 1;
         let terminated = self.cube.is_solved();
         StepResult {
-            next_state: encode_cube_indices(&self.cube),
+            next_state: encode_cube(&self.cube),
             reward: calculate_reward(&self.cube),
             terminated,
             truncated: !terminated && self.steps >= self.max_steps,

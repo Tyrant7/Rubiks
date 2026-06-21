@@ -1,12 +1,13 @@
-use crate::{INPUT_SIZE, OUTPUT_SIZE};
+use crate::{INPUT_SIZE, OUTPUT_SIZE, get_device};
 use tch::{
     Tensor,
     nn::{self, Module},
 };
 
-const HIDDEN: i64 = 512;
-const GROWTH: i64 = 256;
-const EMBED_DIM: i64 = 16;
+const HIDDEN: i64 = 256;
+const GROWTH: i64 = 128;
+const EMBED_DIM: i64 = 4;
+const FACE_TILES: i64 = INPUT_SIZE as i64 / 6;
 const LAYERS_PER_BLOCK: usize = 2;
 const NUM_BLOCKS: usize = 3;
 
@@ -19,18 +20,18 @@ pub struct PositionalEmbedding {
 impl PositionalEmbedding {
     pub fn new(vs: &nn::Path, embed_dim: i64) -> Self {
         Self {
-            embedding: nn::embedding(vs / "pos_embed", 24, embed_dim, Default::default()),
+            embedding: nn::embedding(vs / "pos_embed", FACE_TILES, embed_dim, Default::default()),
             embed_dim,
         }
     }
 
     pub fn forward(&self, batch_size: i64) -> Tensor {
-        // indices 0..INPUT_SIZE-1, tiled across batch
-        let indices = Tensor::arange(INPUT_SIZE as i64, (tch::Kind::Int64, tch::Device::Cpu));
+        // indices 0..FACE_TILES-1, tiled across batch
+        let indices = Tensor::arange(FACE_TILES, (tch::Kind::Int64, get_device()));
         let embedded = self.embedding.forward(&indices);
-        // [INPUT_SIZE, embed_dim] → [1, INPUT_SIZE * embed_dim] → [batch, INPUT_SIZE * embed_dim]
+        // [FACE_TILES, embed_dim] -> [1, FACE_TILES * embed_dim] -> [batch, FACE_TILES * embed_dim]
         embedded
-            .view([1, 24 * self.embed_dim])
+            .view([1, FACE_TILES * self.embed_dim])
             .expand([batch_size, -1], false)
     }
 }
@@ -148,7 +149,11 @@ pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
 
     DenseNetwork {
         embedding: PositionalEmbedding::new(vs, EMBED_DIM),
-        input: hidden_linear(vs / "input", INPUT_SIZE as i64 * EMBED_DIM, HIDDEN),
+        input: hidden_linear(
+            vs / "input",
+            INPUT_SIZE as i64 + FACE_TILES * EMBED_DIM,
+            HIDDEN,
+        ),
         blocks,
         transitions,
         head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE as i64),
