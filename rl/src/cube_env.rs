@@ -4,7 +4,7 @@ use tch::Tensor;
 
 use crate::{CUBE_SIZE, INPUT_SIZE, get_device};
 
-/// Returns a vector of all colours on the given cube in order
+/// Returns a vector containing the colour for each tile in order
 fn encode_cube_indices(cube: &Cube<CUBE_SIZE>) -> Tensor {
     let mut data = Vec::with_capacity(INPUT_SIZE);
 
