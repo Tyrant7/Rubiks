@@ -1,8 +1,8 @@
-use std::{fmt, time::Instant};
 pub mod network;
 pub mod sac_logging;
 
 use rand::RngExt;
+use std::{fmt, time::Instant};
 
 use tch::{
     Kind, TchError, Tensor,
@@ -19,12 +19,12 @@ use crate::{
     evaluate_model,
 };
 
-use crate::logging::{Loggable, write_scalars};
-use crate::sac::network::{DenseNetwork, initialize_network};
-use crate::sac::sac_logging::{
+use crate::actor_critic::network::{DenseNetwork, initialize_network};
+use crate::actor_critic::sac_logging::{
     AlphaMetrics, CurriculumMetrics, EpisodeMetrics, PerformanceMetrics, UpdateMetricTotals,
     UpdateMetrics,
 };
+use crate::logging::{Loggable, write_scalars};
 
 pub struct SacConfig {
     // Replay buffer

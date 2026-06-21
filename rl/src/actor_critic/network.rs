@@ -4,10 +4,33 @@ use tch::{
     nn::{self, Module},
 };
 
-const HIDDEN: i64 = 512;
-const GROWTH: i64 = 256;
+const HIDDEN: i64 = 256;
+const GROWTH: i64 = 128;
+const EMBED_DIM: i64 = 16;
 const LAYERS_PER_BLOCK: usize = 2;
 const NUM_BLOCKS: usize = 3;
+
+#[derive(Debug)]
+pub struct ColourEmbedding {
+    embedding: nn::Embedding,
+    embed_dim: i64,
+}
+
+impl ColourEmbedding {
+    pub fn new(vs: &nn::Path, embed_dim: i64) -> Self {
+        Self {
+            embedding: nn::embedding(vs / "colour_embed", 6, embed_dim, Default::default()),
+            embed_dim,
+        }
+    }
+
+    pub fn forward(&self, colour_indices: &Tensor) -> Tensor {
+        // colour_indices: [batch, INPUT_SIZE] integer indices
+        // output: [batch, INPUT_SIZE * embed_dim]
+        let embedded = self.embedding.forward(colour_indices);
+        embedded.view([-1, INPUT_SIZE as i64 * self.embed_dim])
+    }
+}
 
 fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
     nn::linear(
@@ -86,6 +109,7 @@ impl DenseBlock {
 
 #[derive(Debug)]
 pub struct DenseNetwork {
+    embedding: ColourEmbedding,
     input: nn::Linear,
     blocks: Vec<DenseBlock>,
     transitions: Vec<nn::Linear>,
@@ -94,7 +118,8 @@ pub struct DenseNetwork {
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut xs = self.input.forward(xs).elu();
+        let xs = self.embedding.forward(xs);
+        let mut xs = self.input.forward(&xs).elu();
         for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
             xs = transition.forward(&block.forward(&xs)).elu();
         }
@@ -117,7 +142,8 @@ pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
     }
 
     DenseNetwork {
-        input: hidden_linear(vs / "input", INPUT_SIZE as i64, HIDDEN),
+        embedding: ColourEmbedding::new(vs, EMBED_DIM),
+        input: hidden_linear(vs / "input", INPUT_SIZE as i64 * EMBED_DIM, HIDDEN),
         blocks,
         transitions,
         head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE as i64),
