@@ -11,24 +11,27 @@ const LAYERS_PER_BLOCK: usize = 2;
 const NUM_BLOCKS: usize = 3;
 
 #[derive(Debug)]
-pub struct ColourEmbedding {
+pub struct PositionalEmbedding {
     embedding: nn::Embedding,
     embed_dim: i64,
 }
 
-impl ColourEmbedding {
+impl PositionalEmbedding {
     pub fn new(vs: &nn::Path, embed_dim: i64) -> Self {
         Self {
-            embedding: nn::embedding(vs / "colour_embed", 6, embed_dim, Default::default()),
+            embedding: nn::embedding(vs / "pos_embed", 24, embed_dim, Default::default()),
             embed_dim,
         }
     }
 
-    pub fn forward(&self, colour_indices: &Tensor) -> Tensor {
-        // colour_indices: [batch, INPUT_SIZE] integer indices
-        // output: [batch, INPUT_SIZE * embed_dim]
-        let embedded = self.embedding.forward(colour_indices);
-        embedded.view([-1, INPUT_SIZE as i64 * self.embed_dim])
+    pub fn forward(&self, batch_size: i64) -> Tensor {
+        // indices 0..INPUT_SIZE-1, tiled across batch
+        let indices = Tensor::arange(INPUT_SIZE as i64, (tch::Kind::Int64, tch::Device::Cpu));
+        let embedded = self.embedding.forward(&indices);
+        // [INPUT_SIZE, embed_dim] → [1, INPUT_SIZE * embed_dim] → [batch, INPUT_SIZE * embed_dim]
+        embedded
+            .view([1, 24 * self.embed_dim])
+            .expand([batch_size, -1], false)
     }
 }
 
@@ -109,7 +112,7 @@ impl DenseBlock {
 
 #[derive(Debug)]
 pub struct DenseNetwork {
-    embedding: ColourEmbedding,
+    embedding: PositionalEmbedding,
     input: nn::Linear,
     blocks: Vec<DenseBlock>,
     transitions: Vec<nn::Linear>,
@@ -118,7 +121,9 @@ pub struct DenseNetwork {
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let xs = self.embedding.forward(xs);
+        let batch_size = xs.size()[0];
+        let pos = self.embedding.forward(batch_size);
+        let xs = Tensor::cat(&[xs, &pos], 1); // [batch, 144 + INPUT_SIZE * embed_dim]
         let mut xs = self.input.forward(&xs).elu();
         for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
             xs = transition.forward(&block.forward(&xs)).elu();
@@ -142,7 +147,7 @@ pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
     }
 
     DenseNetwork {
-        embedding: ColourEmbedding::new(vs, EMBED_DIM),
+        embedding: PositionalEmbedding::new(vs, EMBED_DIM),
         input: hidden_linear(vs / "input", INPUT_SIZE as i64 * EMBED_DIM, HIDDEN),
         blocks,
         transitions,
