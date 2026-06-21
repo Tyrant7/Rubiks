@@ -15,11 +15,12 @@ const NUM_BLOCKS: usize = 3;
 #[derive(Debug)]
 pub struct TileEmbedding {
     shared_linear: nn::Linear,
+    norm: nn::LayerNorm,
     pos_features: Tensor, // [24, 5]
 }
 
 impl TileEmbedding {
-    pub fn new(path: &nn::Path, embed_dim: i64) -> Self {
+    pub fn new(vs: nn::Path, embed_dim: i64) -> Self {
         let mut features = Vec::new();
         for face_idx in 0..6i32 {
             for row in 0..CUBE_SIZE as i32 {
@@ -37,7 +38,8 @@ impl TileEmbedding {
             .to_device(get_device());
 
         TileEmbedding {
-            shared_linear: nn::linear(path, 11, embed_dim, Default::default()),
+            shared_linear: nn::linear(&vs / "linear", 11, embed_dim, Default::default()),
+            norm: nn::layer_norm(&vs / "norm", vec![embed_dim], Default::default()),
             pos_features,
         }
     }
@@ -58,7 +60,7 @@ impl TileEmbedding {
         let xs = Tensor::cat(&[&xs, &pos], 2);
 
         // shared linear [batch, 24, 11] → [batch, 24, embed_dim]
-        let xs = self.shared_linear.forward(&xs);
+        let xs = self.shared_linear.forward(&xs).apply(&self.norm);
 
         // flatten [batch, 24 * embed_dim]
         xs.view([batch_size, -1])
@@ -151,7 +153,7 @@ pub struct DenseNetwork {
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let xs = self.embedding.forward(xs).elu();
+        let xs = self.embedding.forward(xs);
         let mut xs = self.input.forward(&xs).elu();
         for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
             xs = transition.forward(&block.forward(&xs)).elu();
@@ -175,7 +177,7 @@ pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
     }
 
     DenseNetwork {
-        embedding: TileEmbedding::new(vs, EMBED_DIM),
+        embedding: TileEmbedding::new(vs / "embed", EMBED_DIM),
         input: hidden_linear(vs / "input", FACE_TILES * EMBED_DIM, HIDDEN),
         blocks,
         transitions,
