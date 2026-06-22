@@ -2,7 +2,10 @@ pub mod network;
 pub mod sac_logging;
 
 use rand::RngExt;
-use std::{fmt, time::Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use tch::{
     Kind, TchError, Tensor,
@@ -181,19 +184,17 @@ fn sac_update(
         &rewards + config.gamma * &next_v * (1. - &terminated)
     });
 
-    let q1 = critic1
-        .forward(&states)
-        .gather(1, &actions.unsqueeze(1), false)
-        .squeeze_dim(1);
+    let q1 = critic1.forward(&states);
+    let q2 = critic2.forward(&states);
+    let q_min = q1.detach().minimum(&q2.detach());
+
+    let q1 = q1.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
     let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
     critic1_opt.zero_grad();
     critic1_loss.backward();
     critic1_opt.step();
 
-    let q2 = critic2
-        .forward(&states)
-        .gather(1, &actions.unsqueeze(1), false)
-        .squeeze_dim(1);
+    let q2 = q2.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
     let critic2_loss = q2.mse_loss(&target, tch::Reduction::Mean);
     critic2_opt.zero_grad();
     critic2_loss.backward();
@@ -203,10 +204,6 @@ fn sac_update(
     let probs = logits.softmax(-1, Kind::Float);
     let log_probs = logits.log_softmax(-1, Kind::Float);
 
-    let q1_detached = tch::no_grad(|| critic1.forward(&states));
-    let q2_detached = tch::no_grad(|| critic2.forward(&states));
-    let q_min = q1_detached.minimum(&q2_detached);
-
     let alpha = log_alpha.exp();
     let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
@@ -215,14 +212,9 @@ fn sac_update(
     actor_loss.backward();
     actor_opt.step();
 
-    let entropy = tch::no_grad(|| {
-        let logits = actor.forward(&states);
-        let probs = logits.softmax(-1, Kind::Float);
-        let log_probs = logits.log_softmax(-1, Kind::Float);
-        -(&probs * &log_probs)
-            .sum_dim_intlist(&[1i64][..], false, Kind::Float)
-            .mean(Kind::Float)
-    });
+    let entropy = -(&probs * &log_probs)
+        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+        .mean(Kind::Float);
     let entropy_error = &entropy - target_entropy;
     let alpha_loss = (&probs.detach() * (-log_alpha * (&log_probs + target_entropy).detach()))
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
@@ -291,6 +283,14 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut curriculum_active = config.learning_starts == 0;
     let mut update_metrics = UpdateMetricTotals::default();
 
+    // Profiling accumulators
+    let mut time_actions = Duration::ZERO;
+    let mut time_steps = Duration::ZERO;
+    let mut time_update = Duration::ZERO;
+    let mut time_target = Duration::ZERO;
+    let mut time_bookkeeping = Duration::ZERO;
+    let mut profile_iters = 0usize;
+
     let max_steps = config.max_steps(scramble_depth);
     let mut envs = (0..config.num_envs)
         .map(|_| EpisodeState::new(scramble_depth, max_steps))
@@ -331,6 +331,8 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut rng = rand::rng();
 
     while completed_episodes < config.episodes {
+        // --- Action selection ---
+        let t = Instant::now();
         let actions = if env_steps < config.learning_starts {
             Tensor::from_slice(
                 &(0..envs.len())
@@ -351,6 +353,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 .multinomial(1, true)
                 .squeeze_dim(1)
         };
+        time_actions += t.elapsed();
 
         for env_idx in 0..envs.len() {
             if completed_episodes >= config.episodes {
@@ -359,10 +362,16 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
 
             let action = actions.int64_value(&[env_idx as i64]) as usize;
             let episode = &mut envs[env_idx];
+
+            // --- Env step ---
+            let t = Instant::now();
             let previous_state = episode.state.shallow_clone();
             let step = episode.env.step(action);
             let done = step.terminated || step.truncated;
+            time_steps += t.elapsed();
 
+            // --- Bookkeeping ---
+            let t = Instant::now();
             env_steps += 1;
             episode.reward += step.reward;
             episode.solved |= step.terminated;
@@ -380,7 +389,10 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 step.truncated,
             ));
             episode.state = step.next_state;
+            time_bookkeeping += t.elapsed();
 
+            // --- SAC update ---
+            let t = Instant::now();
             if env_steps > config.learning_starts
                 && replay_buffer.len() >= sac_config.batch_size
                 && env_steps.is_multiple_of(sac_config.update_every)
@@ -402,7 +414,10 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 ));
                 learner_updates += 1;
             }
+            time_update += t.elapsed();
 
+            // --- Target network update ---
+            let t = Instant::now();
             if env_steps > config.learning_starts
                 && env_steps.is_multiple_of(sac_config.target_network_frequency)
             {
@@ -414,6 +429,9 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                     &mut target_critic2_vs,
                 );
             }
+            time_target += t.elapsed();
+
+            profile_iters += 1;
 
             if !done {
                 continue;
@@ -475,6 +493,26 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 write_scalars(&mut writer, &perf_metrics.scalars(), completed_episodes);
                 write_scalars(&mut writer, &sac_config.scalars(), completed_episodes);
                 write_scalars(&mut writer, &config.scalars(), completed_episodes);
+
+                // Print profiling every log interval
+                if profile_iters > 0 {
+                    println!(
+                        "Profile ({} iters) | actions: {:.3}ms | steps: {:.3}ms | update: {:.3}ms | target: {:.3}ms | bookkeeping: {:.3}ms",
+                        profile_iters,
+                        time_actions.as_secs_f64() * 1000. / profile_iters as f64,
+                        time_steps.as_secs_f64() * 1000. / profile_iters as f64,
+                        time_update.as_secs_f64() * 1000. / profile_iters as f64,
+                        time_target.as_secs_f64() * 1000. / profile_iters as f64,
+                        time_bookkeeping.as_secs_f64() * 1000. / profile_iters as f64,
+                    );
+                    // Reset accumulators
+                    time_actions = Duration::ZERO;
+                    time_steps = Duration::ZERO;
+                    time_update = Duration::ZERO;
+                    time_target = Duration::ZERO;
+                    time_bookkeeping = Duration::ZERO;
+                    profile_iters = 0;
+                }
 
                 println!(
                     "{}",

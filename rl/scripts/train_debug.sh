@@ -20,7 +20,7 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-baseline_positional_embeds_norm-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-baseline_pos_embeds_norm_optim-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-10000}"
@@ -46,7 +46,7 @@ export RL_ADAM_EPS="${RL_ADAM_EPS:-1e-4}"
 
 # TD learning
 export RL_GAMMA="${RL_GAMMA:-0.99}"
-export RL_TAU="${RL_TAU:-0.000125}"
+export RL_TAU="${RL_TAU:-1}"
 
 # Entropy / alpha
 export RL_TARGET_ENTROPY_SCALE="${RL_TARGET_ENTROPY_SCALE:-0.2}"
@@ -54,7 +54,7 @@ export RL_LOG_ALPHA_INIT="${RL_LOG_ALPHA_INIT:--2.0}"
 
 # Update schedule
 export RL_UPDATE_EVERY="${RL_UPDATE_EVERY:-4}"
-export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-1}"
+export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-8000}"
 
 # Curriculum
 export RL_CURRICULUM_THRESHOLD="${RL_CURRICULUM_THRESHOLD:-10}"
