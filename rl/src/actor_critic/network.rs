@@ -6,8 +6,8 @@ use tch::{
 
 const FACE_TILES: i64 = (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
-const HIDDEN: i64 = 256;
-const GROWTH: i64 = 128;
+const HIDDEN: i64 = 512;
+const GROWTH: i64 = 256;
 const EMBED_DIM: i64 = 16;
 const LAYERS_PER_BLOCK: usize = 2;
 const NUM_BLOCKS: usize = 3;
@@ -144,7 +144,7 @@ impl DenseBlock {
 
 #[derive(Debug)]
 pub struct DenseNetwork {
-    embedding: TileEmbedding,
+    // embedding: TileEmbedding,
     input: nn::Linear,
     blocks: Vec<DenseBlock>,
     transitions: Vec<nn::Linear>,
@@ -153,7 +153,7 @@ pub struct DenseNetwork {
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let xs = self.embedding.forward(xs);
+        // let xs = self.embedding.forward(xs);
         let mut xs = self.input.forward(&xs).elu();
         for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
             xs = transition.forward(&block.forward(&xs)).elu();
@@ -177,8 +177,9 @@ pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
     }
 
     DenseNetwork {
-        embedding: TileEmbedding::new(vs / "embed", EMBED_DIM),
-        input: hidden_linear(vs / "input", FACE_TILES * EMBED_DIM, HIDDEN),
+        // embedding: TileEmbedding::new(vs / "embed", EMBED_DIM),
+        // input: hidden_linear(vs / "input", FACE_TILES * EMBED_DIM, HIDDEN),
+        input: hidden_linear(vs / "input", FACE_TILES * 6, HIDDEN),
         blocks,
         transitions,
         head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE),
