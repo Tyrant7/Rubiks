@@ -6,10 +6,8 @@ use tch::{
 
 const FACE_TILES: i64 = (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
-const HIDDEN: i64 = 512;
-const GROWTH: i64 = 256;
-const EMBED_DIM: i64 = 16;
-const LAYERS_PER_BLOCK: usize = 2;
+const D_MODEL: i64 = 128;
+const BLOCK_HIDDEN: i64 = 256;
 const NUM_BLOCKS: usize = 3;
 
 #[derive(Debug)]
@@ -47,10 +45,10 @@ impl TileEmbedding {
     pub fn forward(&self, xs: &Tensor) -> Tensor {
         let batch_size = xs.size()[0];
 
-        // [batch, 144] → [batch, 24, 6]
+        // [batch, 144] -> [batch, 24, 6]
         let xs = xs.view([batch_size, FACE_TILES, 6]);
 
-        // [24, 5] → [1, 24, 5] → [batch, 24, 5]
+        // [24, 5] -> [1, 24, 5] -> [batch, 24, 5]
         let pos = self
             .pos_features
             .unsqueeze(0)
@@ -59,11 +57,8 @@ impl TileEmbedding {
         // [batch, 24, 11]
         let xs = Tensor::cat(&[&xs, &pos], 2);
 
-        // shared linear [batch, 24, 11] → [batch, 24, embed_dim]
-        let xs = self.shared_linear.forward(&xs).apply(&self.norm);
-
-        // flatten [batch, 24 * embed_dim]
-        xs.view([batch_size, -1])
+        // shared linear [batch, 24, 11] -> [batch, 24, embed_dim]
+        self.shared_linear.forward(&xs).apply(&self.norm)
     }
 }
 
@@ -97,91 +92,114 @@ fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
 }
 
 #[derive(Debug)]
-struct DenseLayer {
-    norm: nn::LayerNorm,
-    fc: nn::Linear,
+pub struct SelfAttention {
+    q_linear: nn::Linear,
+    k_linear: nn::Linear,
+    v_linear: nn::Linear,
+    embed_dim: i64,
+    out_linear: nn::Linear,
 }
 
-impl DenseLayer {
-    fn new(vs: &nn::Path, in_dim: i64) -> Self {
+impl SelfAttention {
+    pub fn new(vs: nn::Path, embed_dim: i64) -> Self {
+        let config = nn::LinearConfig::default();
         Self {
-            norm: nn::layer_norm(vs / "norm", vec![GROWTH], Default::default()),
-            fc: hidden_linear(vs / "fc", in_dim, GROWTH),
+            q_linear: nn::linear(&vs / "q", embed_dim, embed_dim, config),
+            k_linear: nn::linear(&vs / "k", embed_dim, embed_dim, config),
+            v_linear: nn::linear(&vs / "v", embed_dim, embed_dim, config),
+            embed_dim,
+            out_linear: nn::linear(&vs / "out", embed_dim, embed_dim, config),
         }
     }
+}
 
-    fn forward(&self, xs: &Tensor) -> Tensor {
-        xs.apply(&self.fc).elu().apply(&self.norm)
+impl Module for SelfAttention {
+    fn forward(&self, x: &Tensor) -> Tensor {
+        // x shape: [batch_size, seq_len, embed_dim]
+        let q = x.apply(&self.q_linear);
+        let k = x.apply(&self.k_linear);
+        let v = x.apply(&self.v_linear);
+
+        // Calculate attention scores: (Q * K^T)
+        let scores = q.matmul(&k.transpose(-2, -1));
+
+        // Scale scores by sqrt(embed_dim)
+        let scaling_factor = (self.embed_dim as f64).sqrt();
+        let scaled_scores = scores / scaling_factor;
+
+        // Apply softmax to get attention weights
+        let attention_weights = scaled_scores.softmax(-1, tch::Kind::Float);
+
+        // Multiply weights by values: (Weights * V)
+        attention_weights.matmul(&v).apply(&self.out_linear)
     }
 }
 
 #[derive(Debug)]
-struct DenseBlock {
-    layers: Vec<DenseLayer>,
+struct TransformerLayer {
+    attention: SelfAttention,
+    norm1: nn::LayerNorm,
+    norm2: nn::LayerNorm,
+    fc1: nn::Linear,
+    fc2: nn::Linear,
 }
 
-impl DenseBlock {
+impl TransformerLayer {
     fn new(vs: &nn::Path, in_dim: i64) -> Self {
-        let layers = (0..LAYERS_PER_BLOCK)
-            .map(|i| DenseLayer::new(&(vs / format!("layer{i}")), in_dim + i as i64 * GROWTH))
-            .collect();
-        Self { layers }
+        Self {
+            attention: SelfAttention::new(vs / "self_attention", in_dim),
+            norm1: nn::layer_norm(vs / "norm1", vec![D_MODEL], Default::default()),
+            norm2: nn::layer_norm(vs / "norm2", vec![D_MODEL], Default::default()),
+            fc1: hidden_linear(vs / "fc1", D_MODEL, BLOCK_HIDDEN),
+            fc2: hidden_linear(vs / "fc2", BLOCK_HIDDEN, D_MODEL),
+        }
     }
 
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut outputs = vec![xs.shallow_clone()];
-        for layer in &self.layers {
-            let input = Tensor::cat(&outputs, 1);
-            outputs.push(layer.forward(&input));
-        }
-        Tensor::cat(&outputs, 1)
-    }
+        let attn = self.attention.forward(&xs.apply(&self.norm1));
+        let xs = xs + attn;
 
-    fn out_dim(in_dim: i64) -> i64 {
-        in_dim + LAYERS_PER_BLOCK as i64 * GROWTH
+        let mlp = xs
+            .apply(&self.norm2)
+            .apply(&self.fc1)
+            .elu()
+            .apply(&self.fc2);
+        xs + mlp
     }
 }
 
 #[derive(Debug)]
 pub struct DenseNetwork {
-    // embedding: TileEmbedding,
-    input: nn::Linear,
-    blocks: Vec<DenseBlock>,
-    transitions: Vec<nn::Linear>,
-    head: nn::Linear,
+    embedding: TileEmbedding,
+    blocks: Vec<TransformerLayer>,
+    head: nn::Sequential,
 }
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        // let xs = self.embedding.forward(xs);
-        let mut xs = self.input.forward(&xs).elu();
-        for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
-            xs = transition.forward(&block.forward(&xs)).elu();
+        let mut xs = self.embedding.forward(xs);
+        for block in self.blocks.iter() {
+            xs = block.forward(&xs);
         }
+        xs = xs.mean_dim(&[1i64][..], false, tch::Kind::Float);
         self.head.forward(&xs)
     }
 }
 
 pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
-    let block_out_dim = DenseBlock::out_dim(HIDDEN);
-
     let mut blocks = Vec::with_capacity(NUM_BLOCKS);
-    let mut transitions = Vec::with_capacity(NUM_BLOCKS);
     for i in 0..NUM_BLOCKS {
-        blocks.push(DenseBlock::new(&(vs / format!("block{i}")), HIDDEN));
-        transitions.push(hidden_linear(
-            vs / format!("transition{i}"),
-            block_out_dim,
-            HIDDEN,
-        ));
+        blocks.push(TransformerLayer::new(&(vs / format!("block{i}")), D_MODEL));
     }
 
+    let head = nn::seq()
+        .add(head_linear(vs / "head1", D_MODEL, BLOCK_HIDDEN))
+        .add_fn(|xs| xs.elu())
+        .add(head_linear(vs / "head2", BLOCK_HIDDEN, OUTPUT_SIZE));
+
     DenseNetwork {
-        // embedding: TileEmbedding::new(vs / "embed", EMBED_DIM),
-        // input: hidden_linear(vs / "input", FACE_TILES * EMBED_DIM, HIDDEN),
-        input: hidden_linear(vs / "input", FACE_TILES * 6, HIDDEN),
+        embedding: TileEmbedding::new(vs / "embed", D_MODEL),
         blocks,
-        transitions,
-        head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE),
+        head,
     }
 }
