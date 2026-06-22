@@ -11,8 +11,9 @@ use tch::{
 const FACE_TILES: i64 = (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
 const D_MODEL: i64 = 128;
-const BLOCK_HIDDEN: i64 = 512;
+const BLOCK_HIDDEN: i64 = 256;
 const NUM_BLOCKS: usize = 3;
+const HEAD_HIDDEN: i64 = 64;
 
 #[derive(Debug)]
 pub struct TileEmbedding {
@@ -152,9 +153,9 @@ impl TransformerLayer {
     fn new(vs: &nn::Path, in_dim: i64) -> Self {
         Self {
             attention: SelfAttention::new(vs / "self_attention", in_dim),
-            norm1: nn::layer_norm(vs / "norm1", vec![D_MODEL], Default::default()),
-            norm2: nn::layer_norm(vs / "norm2", vec![D_MODEL], Default::default()),
-            fc1: hidden_linear(vs / "fc1", D_MODEL, BLOCK_HIDDEN),
+            norm1: nn::layer_norm(vs / "norm1", vec![in_dim], Default::default()),
+            norm2: nn::layer_norm(vs / "norm2", vec![in_dim], Default::default()),
+            fc1: hidden_linear(vs / "fc1", in_dim, BLOCK_HIDDEN),
             fc2: hidden_linear(vs / "fc2", BLOCK_HIDDEN, D_MODEL),
         }
     }
@@ -175,17 +176,25 @@ impl TransformerLayer {
 #[derive(Debug)]
 pub struct DenseNetwork {
     embedding: TileEmbedding,
+    cls_token: Tensor,
     blocks: Vec<TransformerLayer>,
     head: nn::Sequential,
 }
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut xs = self.embedding.forward(xs);
+        let xs = self.embedding.forward(&xs);
+
+        // CLS token
+        let batch_size = xs.size()[0];
+        let cls = self.cls_token.expand([batch_size, -1, -1], false); // [batch, 1, D_MODEL]
+        let mut xs = Tensor::cat(&[&cls, &xs], 1); // [batch, 25, D_MODEL]
+
         for block in self.blocks.iter() {
             xs = block.forward(&xs);
         }
-        xs = xs.mean_dim(&[1i64][..], false, tch::Kind::Float);
+        let xs = xs.select(1, 0); // take CLS token output [batch, D_MODEL]
+
         self.head.forward(&xs)
     }
 }
@@ -197,12 +206,20 @@ pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
     }
 
     let head = nn::seq()
-        .add(head_linear(vs / "head1", D_MODEL, BLOCK_HIDDEN))
+        .add(head_linear(vs / "head1", D_MODEL, HEAD_HIDDEN))
         .add_fn(|xs| xs.elu())
-        .add(head_linear(vs / "head2", BLOCK_HIDDEN, OUTPUT_SIZE));
+        .add(head_linear(vs / "head2", HEAD_HIDDEN, OUTPUT_SIZE));
 
     DenseNetwork {
         embedding: TileEmbedding::new(vs / "embed", D_MODEL),
+        cls_token: vs.var(
+            "cls_token",
+            &[1, 1, D_MODEL],
+            nn::Init::Randn {
+                mean: 0.0,
+                stdev: 0.02,
+            },
+        ),
         blocks,
         head,
     }

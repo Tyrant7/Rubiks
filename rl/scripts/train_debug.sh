@@ -20,7 +20,7 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-wide_optimized-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-transformer_cls-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
