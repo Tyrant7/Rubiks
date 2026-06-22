@@ -399,6 +399,19 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             episode.state = step.next_state;
             time_bookkeeping += t.elapsed();
 
+            if env_steps > config.learning_starts
+                && replay_buffer.len() >= sac_config.batch_size
+                && env_steps.is_multiple_of(sac_config.update_every)
+            {
+                to_update += 1;
+            }
+
+            if env_steps > config.learning_starts
+                && env_steps.is_multiple_of(sac_config.target_network_frequency)
+            {
+                to_update_target += 1;
+            }
+
             if !done {
                 continue;
             }
@@ -424,19 +437,6 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
 
             if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
                 evaluate_model(&actor, config, &mut writer, completed_episodes);
-            }
-
-            if env_steps > config.learning_starts
-                && replay_buffer.len() >= sac_config.batch_size
-                && env_steps.is_multiple_of(sac_config.update_every)
-            {
-                to_update += 1;
-            }
-
-            if env_steps > config.learning_starts
-                && env_steps.is_multiple_of(sac_config.target_network_frequency)
-            {
-                to_update_target += 1;
             }
 
             if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {
@@ -571,6 +571,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             learner_updates += 1;
         }
 
+        // --- Target update ---
         while to_update_target > 0 {
             let t = Instant::now();
 
