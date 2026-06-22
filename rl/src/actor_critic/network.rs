@@ -4,10 +4,14 @@ use tch::{
     nn::{self, Module},
 };
 
+// TODO:
+// Multi-head attention
+// Learned positional embeddings instead of hand-crafted coordinates
+
 const FACE_TILES: i64 = (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
 const D_MODEL: i64 = 128;
-const BLOCK_HIDDEN: i64 = 256;
+const BLOCK_HIDDEN: i64 = 512;
 const NUM_BLOCKS: usize = 3;
 
 #[derive(Debug)]
