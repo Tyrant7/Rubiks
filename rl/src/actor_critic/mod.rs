@@ -186,7 +186,7 @@ fn sac_update(
 
     let q1 = critic1.forward(&states);
     let q2 = critic2.forward(&states);
-    let q_min = q1.detach().minimum(&q2.detach());
+    let q_min = q1.minimum(&q2);
 
     let q1 = q1.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
     let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
@@ -205,7 +205,7 @@ fn sac_update(
     let log_probs = logits.log_softmax(-1, Kind::Float);
 
     let alpha = log_alpha.exp();
-    let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
+    let actor_loss = (&probs * (&alpha * &log_probs - &q_min.detach()))
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
     actor_opt.zero_grad();
@@ -216,7 +216,7 @@ fn sac_update(
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
     let entropy_error = &entropy - target_entropy;
-    let alpha_loss = (&probs.detach() * (-log_alpha * (&log_probs + target_entropy).detach()))
+    let alpha_loss = (-log_alpha * (&log_probs + target_entropy).detach())
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
 
@@ -289,7 +289,11 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut time_update = Duration::ZERO;
     let mut time_target = Duration::ZERO;
     let mut time_bookkeeping = Duration::ZERO;
-    let mut profile_iters = 0usize;
+
+    let mut action_batches = 0usize;
+    let mut env_transitions = 0usize;
+    let mut updates_run = 0usize;
+    let mut target_updates_run = 0usize;
 
     let max_steps = config.max_steps(scramble_depth);
     let mut envs = (0..config.num_envs)
@@ -354,7 +358,10 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 .squeeze_dim(1)
         };
         time_actions += t.elapsed();
+        action_batches += 1;
 
+        let mut to_update = 0;
+        let mut to_update_target = 0;
         for env_idx in 0..envs.len() {
             if completed_episodes >= config.episodes {
                 break;
@@ -369,6 +376,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             let step = episode.env.step(action);
             let done = step.terminated || step.truncated;
             time_steps += t.elapsed();
+            env_transitions += 1;
 
             // --- Bookkeeping ---
             let t = Instant::now();
@@ -391,47 +399,18 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             episode.state = step.next_state;
             time_bookkeeping += t.elapsed();
 
-            // --- SAC update ---
-            let t = Instant::now();
             if env_steps > config.learning_starts
                 && replay_buffer.len() >= sac_config.batch_size
                 && env_steps.is_multiple_of(sac_config.update_every)
             {
-                update_metrics.add(sac_update(
-                    &sac_config,
-                    target_entropy,
-                    &replay_buffer,
-                    &actor,
-                    &critic1,
-                    &critic2,
-                    &target_critic1,
-                    &target_critic2,
-                    &mut actor_opt,
-                    &mut critic1_opt,
-                    &mut critic2_opt,
-                    &log_alpha,
-                    &mut alpha_opt,
-                ));
-                learner_updates += 1;
+                to_update += 1;
             }
-            time_update += t.elapsed();
 
-            // --- Target network update ---
-            let t = Instant::now();
             if env_steps > config.learning_starts
                 && env_steps.is_multiple_of(sac_config.target_network_frequency)
             {
-                update_target_networks(
-                    &sac_config,
-                    &critic1_vs,
-                    &critic2_vs,
-                    &mut target_critic1_vs,
-                    &mut target_critic2_vs,
-                );
+                to_update_target += 1;
             }
-            time_target += t.elapsed();
-
-            profile_iters += 1;
 
             if !done {
                 continue;
@@ -494,26 +473,6 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 write_scalars(&mut writer, &sac_config.scalars(), completed_episodes);
                 write_scalars(&mut writer, &config.scalars(), completed_episodes);
 
-                // Print profiling every log interval
-                if profile_iters > 0 {
-                    println!(
-                        "Profile ({} iters) | actions: {:.3}ms | steps: {:.3}ms | update: {:.3}ms | target: {:.3}ms | bookkeeping: {:.3}ms",
-                        profile_iters,
-                        time_actions.as_secs_f64() * 1000. / profile_iters as f64,
-                        time_steps.as_secs_f64() * 1000. / profile_iters as f64,
-                        time_update.as_secs_f64() * 1000. / profile_iters as f64,
-                        time_target.as_secs_f64() * 1000. / profile_iters as f64,
-                        time_bookkeeping.as_secs_f64() * 1000. / profile_iters as f64,
-                    );
-                    // Reset accumulators
-                    time_actions = Duration::ZERO;
-                    time_steps = Duration::ZERO;
-                    time_update = Duration::ZERO;
-                    time_target = Duration::ZERO;
-                    time_bookkeeping = Duration::ZERO;
-                    profile_iters = 0;
-                }
-
                 println!(
                     "{}",
                     LogSnapshot {
@@ -532,6 +491,27 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 update_metrics = UpdateMetricTotals::default();
                 last_log_time = now;
                 last_log_env_steps = env_steps;
+
+                // Profiling
+                println!(
+                    "Profile | actions: {:.3}ms/batch | steps: {:.3}ms/step | bookkeeping: {:.3}ms/step | update: {:.3}ms/update | target: {:.3}ms/update",
+                    time_actions.as_secs_f64() * 1000.0 / action_batches.max(1) as f64,
+                    time_steps.as_secs_f64() * 1000.0 / env_transitions.max(1) as f64,
+                    time_bookkeeping.as_secs_f64() * 1000.0 / env_transitions.max(1) as f64,
+                    time_update.as_secs_f64() * 1000.0 / updates_run.max(1) as f64,
+                    time_target.as_secs_f64() * 1000.0 / target_updates_run.max(1) as f64,
+                );
+
+                time_actions = Duration::ZERO;
+                time_steps = Duration::ZERO;
+                time_update = Duration::ZERO;
+                time_target = Duration::ZERO;
+                time_bookkeeping = Duration::ZERO;
+
+                action_batches = 0;
+                env_transitions = 0;
+                updates_run = 0;
+                target_updates_run = 0;
             }
 
             if completed_episodes.is_multiple_of(config.save_every) {
@@ -562,6 +542,51 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             } else {
                 envs[env_idx].reset(scramble_depth, config.max_steps(scramble_depth));
             }
+        }
+
+        // --- SAC update ---
+        while to_update > 0 {
+            let t = Instant::now();
+
+            update_metrics.add(sac_update(
+                &sac_config,
+                target_entropy,
+                &replay_buffer,
+                &actor,
+                &critic1,
+                &critic2,
+                &target_critic1,
+                &target_critic2,
+                &mut actor_opt,
+                &mut critic1_opt,
+                &mut critic2_opt,
+                &log_alpha,
+                &mut alpha_opt,
+            ));
+
+            time_update += t.elapsed();
+            updates_run += 1;
+
+            to_update -= 1;
+            learner_updates += 1;
+        }
+
+        // --- Target update ---
+        while to_update_target > 0 {
+            let t = Instant::now();
+
+            update_target_networks(
+                &sac_config,
+                &critic1_vs,
+                &critic2_vs,
+                &mut target_critic1_vs,
+                &mut target_critic2_vs,
+            );
+
+            time_target += t.elapsed();
+            target_updates_run += 1;
+
+            to_update_target -= 1;
         }
     }
 
