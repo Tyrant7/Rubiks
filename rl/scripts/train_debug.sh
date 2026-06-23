@@ -20,12 +20,12 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-debug-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-resnet_clip_1.0-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
-export RL_NUM_ENVS="${RL_NUM_ENVS:-16}"
-export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-5000}"
+export RL_NUM_ENVS="${RL_NUM_ENVS:-64}"
+export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-10000}"
 
 # Evaluation
 export RL_EVAL_EVERY="${RL_EVAL_EVERY:-1000}"
@@ -37,16 +37,16 @@ export RL_SAVE_EVERY="${RL_SAVE_EVERY:-1000}"
 
 # Replay buffer
 export RL_BUFFER_SIZE="${RL_BUFFER_SIZE:-200000}"
-export RL_BATCH_SIZE="${RL_BATCH_SIZE:-256}"
+export RL_BATCH_SIZE="${RL_BATCH_SIZE:-1024}"
 
 # Optimizer
-export RL_LEARNING_RATE="${RL_LEARNING_RATE:-3e-4}"
+export RL_LEARNING_RATE="${RL_LEARNING_RATE:-6e-4}"
 export RL_ALPHA_LR="${RL_ALPHA_LR:-3e-4}"
 export RL_ADAM_EPS="${RL_ADAM_EPS:-1e-4}"
 
 # TD learning
 export RL_GAMMA="${RL_GAMMA:-0.99}"
-export RL_TAU="${RL_TAU:-0.000125}"
+export RL_TAU="${RL_TAU:-1}"
 
 # Entropy / alpha
 export RL_TARGET_ENTROPY_SCALE="${RL_TARGET_ENTROPY_SCALE:-0.2}"
@@ -54,10 +54,11 @@ export RL_LOG_ALPHA_INIT="${RL_LOG_ALPHA_INIT:--2.0}"
 
 # Update schedule
 export RL_UPDATE_EVERY="${RL_UPDATE_EVERY:-4}"
-export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-1}"
+export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-2000}"
 
 # Curriculum
 export RL_CURRICULUM_THRESHOLD="${RL_CURRICULUM_THRESHOLD:-10}"
+export RL_MAX_SCRAMBLE="${RL_MAX_SCRAMBLE:-11}"
 export RL_CURRICULUM_MIN_EPISODES="${RL_CURRICULUM_MIN_EPISODES:-1}"
 export RL_CLEAR_REPLAY_ON_ADVANCE="${RL_CLEAR_REPLAY_ON_ADVANCE:-false}"
 

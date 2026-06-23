@@ -1,4 +1,4 @@
-use crate::{logging::Loggable, sac::SacConfig};
+use crate::{actor_critic::SacConfig, logging::Loggable};
 
 // --- Config ------------------------------------
 

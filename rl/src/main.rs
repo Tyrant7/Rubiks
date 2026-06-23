@@ -1,3 +1,7 @@
+mod actor_critic;
+mod cube_env;
+mod logging;
+
 use std::{
     env,
     path::PathBuf,
@@ -8,15 +12,10 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use tch::{Device, nn::Module};
 use tensorboard_rs::summary_writer::SummaryWriter;
 
-use crate::{cube_env::CubeEnv, sac::train_vectorized};
-
-mod cube_env;
-mod logging;
-mod sac;
+use crate::{actor_critic::train_vectorized, cube_env::CubeEnv};
 
 const CUBE_SIZE: usize = 2;
-const INPUT_SIZE: usize = 6 * CUBE_SIZE * CUBE_SIZE * 6;
-const OUTPUT_SIZE: usize = 6 * 3;
+const ACTIONS: usize = 3 * 6;
 
 fn main() {
     let _ = train_vectorized(&TrainingConfig::from_env());

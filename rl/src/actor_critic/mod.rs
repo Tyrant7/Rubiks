@@ -1,8 +1,11 @@
-use std::{fmt, time::Instant};
 pub mod network;
 pub mod sac_logging;
 
 use rand::RngExt;
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use tch::{
     Kind, TchError, Tensor,
@@ -11,20 +14,22 @@ use tch::{
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
-    CUBE_SIZE, OUTPUT_SIZE, TrainingConfig, env_parse, env_parse_bool, env_parse_clamped,
-    env_parse_min, get_device,
+    ACTIONS, CUBE_SIZE, TrainingConfig,
+    actor_critic::network::{INPUT_SIZE, ResNetwork},
+    cube_env::SampleBuffer,
+    env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
 };
 use crate::{
     cube_env::{CubeEnv, ReplayBuffer, Transition},
     evaluate_model,
 };
 
-use crate::logging::{Loggable, write_scalars};
-use crate::sac::network::{DenseNetwork, initialize_network};
-use crate::sac::sac_logging::{
+use crate::actor_critic::network::initialize_network;
+use crate::actor_critic::sac_logging::{
     AlphaMetrics, CurriculumMetrics, EpisodeMetrics, PerformanceMetrics, UpdateMetricTotals,
     UpdateMetrics,
 };
+use crate::logging::{Loggable, write_scalars};
 
 pub struct SacConfig {
     // Replay buffer
@@ -146,110 +151,129 @@ fn adam(config: &SacConfig) -> nn::Adam {
 fn sac_update(
     config: &SacConfig,
     target_entropy: f64,
-    replay_buffer: &ReplayBuffer,
-    actor: &DenseNetwork,
-    critic1: &DenseNetwork,
-    critic2: &DenseNetwork,
-    target_critic1: &DenseNetwork,
-    target_critic2: &DenseNetwork,
+    samples: &SampleBuffer,
+    actor: &ResNetwork,
+    critic1: &ResNetwork,
+    critic2: &ResNetwork,
+    target_critic1: &ResNetwork,
+    target_critic2: &ResNetwork,
     actor_opt: &mut nn::Optimizer,
     critic1_opt: &mut nn::Optimizer,
     critic2_opt: &mut nn::Optimizer,
     log_alpha: &Tensor,
     alpha_opt: &mut nn::Optimizer,
-) -> UpdateMetrics {
-    let batch = replay_buffer.sample_tensors(config.batch_size);
-    let states = batch.states;
-    let next_states = batch.next_states;
-    let actions = batch.actions;
-    let rewards = batch.rewards;
-    let terminated = batch.terminated;
-    let truncated = batch.truncated;
+    update_metrics: bool,
+) -> Option<UpdateMetrics> {
+    let t = Instant::now();
+    let states = &samples.states;
+    let next_states = &samples.next_states;
+    let actions = &samples.actions;
+    let rewards = &samples.rewards;
+    let terminated = &samples.terminated;
+    let truncated = &samples.truncated;
+    let t_sample = t.elapsed();
 
+    let t = Instant::now();
     let target = tch::no_grad(|| {
-        let next_logits = actor.forward(&next_states);
+        let next_logits = actor.forward(next_states);
         let next_probs = next_logits.softmax(-1, Kind::Float);
         let next_log_probs = next_logits.log_softmax(-1, Kind::Float);
-
-        let next_q1 = target_critic1.forward(&next_states);
-        let next_q2 = target_critic2.forward(&next_states);
+        let next_q1 = target_critic1.forward(next_states);
+        let next_q2 = target_critic2.forward(next_states);
         let next_min_q = next_q1.minimum(&next_q2);
-
         let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
             .sum_dim_intlist(&[1i64][..], false, Kind::Float);
-
-        &rewards + config.gamma * &next_v * (1. - &terminated)
+        rewards + config.gamma * &next_v * (1. - terminated)
     });
+    let t_target = t.elapsed();
 
-    let q1 = critic1
-        .forward(&states)
-        .gather(1, &actions.unsqueeze(1), false)
-        .squeeze_dim(1);
+    let t = Instant::now();
+    let q1 = critic1.forward(states);
+    let q2 = critic2.forward(states);
+    let q_min = q1.minimum(&q2);
+
+    // Optimization -> calculating both critic losses at once
+    let q1 = q1.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
+    let q2 = q2.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
     let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
-    critic1_opt.zero_grad();
-    critic1_loss.backward();
-    critic1_opt.step();
-
-    let q2 = critic2
-        .forward(&states)
-        .gather(1, &actions.unsqueeze(1), false)
-        .squeeze_dim(1);
     let critic2_loss = q2.mse_loss(&target, tch::Reduction::Mean);
+    let critic_loss = &critic1_loss + &critic2_loss;
+
+    critic1_opt.zero_grad();
     critic2_opt.zero_grad();
-    critic2_loss.backward();
+
+    critic_loss.backward();
+
+    critic1_opt.clip_grad_norm(0.5);
+    critic2_opt.clip_grad_norm(0.5);
+
+    critic1_opt.step();
     critic2_opt.step();
 
-    let logits = actor.forward(&states);
+    let t_critic = t.elapsed();
+
+    let t = Instant::now();
+    let logits = actor.forward(states);
     let probs = logits.softmax(-1, Kind::Float);
     let log_probs = logits.log_softmax(-1, Kind::Float);
-
-    let q1_detached = tch::no_grad(|| critic1.forward(&states));
-    let q2_detached = tch::no_grad(|| critic2.forward(&states));
-    let q_min = q1_detached.minimum(&q2_detached);
-
     let alpha = log_alpha.exp();
-    let actor_loss = (&probs * (&alpha * &log_probs - &q_min))
+    let actor_loss = (&probs * (&alpha * &log_probs - &q_min.detach()))
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
     actor_opt.zero_grad();
     actor_loss.backward();
+    actor_opt.clip_grad_norm(0.5);
     actor_opt.step();
+    let t_actor = t.elapsed();
 
-    let entropy = tch::no_grad(|| {
-        let logits = actor.forward(&states);
-        let probs = logits.softmax(-1, Kind::Float);
-        let log_probs = logits.log_softmax(-1, Kind::Float);
-        -(&probs * &log_probs)
-            .sum_dim_intlist(&[1i64][..], false, Kind::Float)
-            .mean(Kind::Float)
-    });
-    let entropy_error = &entropy - target_entropy;
-    let alpha_loss = (&probs.detach() * (-log_alpha * (&log_probs + target_entropy).detach()))
+    let t = Instant::now();
+    let entropy = -(&probs * &log_probs)
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
-
+    let entropy_error = &entropy - target_entropy;
+    let alpha_loss = (-log_alpha * (&log_probs + target_entropy).detach())
+        .sum_dim_intlist(&[1i64][..], false, Kind::Float)
+        .mean(Kind::Float);
     alpha_opt.zero_grad();
     alpha_loss.backward();
     alpha_opt.step();
+    let t_alpha = t.elapsed();
 
-    UpdateMetrics {
-        actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
-        critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
-            + f32::try_from(&critic2_loss).expect("loss calculation failed"),
-        alpha_loss: f32::try_from(&alpha_loss).expect("loss calculation failed"),
-        entropy: f32::try_from(&entropy).expect("entropy calculation failed"),
-        entropy_error: f32::try_from(&entropy_error).expect("entropy calculation failed"),
-        policy_max_prob: f32::try_from(&probs.max_dim(1, false).0.mean(Kind::Float))
-            .expect("policy max probability calculation failed"),
-        target_q: f32::try_from(&target.mean(Kind::Float)).expect("target calculation failed"),
-        q1: f32::try_from(&q1.mean(Kind::Float)).expect("q1 calculation failed"),
-        q2: f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed"),
-        replay_truncation: f32::try_from(&truncated.mean(Kind::Float))
-            .expect("truncation calculation failed"),
+    if update_metrics {
+        println!(
+            "SAC breakdown | sample: {:.2}ms | target: {:.2}ms | critics: {:.2}ms | actor: {:.2}ms | alpha: {:.2}ms",
+            t_sample.as_secs_f64() * 1000.,
+            t_target.as_secs_f64() * 1000.,
+            t_critic.as_secs_f64() * 1000.,
+            t_actor.as_secs_f64() * 1000.,
+            t_alpha.as_secs_f64() * 1000.,
+        );
+
+        Some(UpdateMetrics {
+            actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
+            critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
+                + f32::try_from(&critic2_loss).expect("loss calculation failed"),
+            alpha_loss: f32::try_from(&alpha_loss).expect("loss calculation failed"),
+            entropy: f32::try_from(&entropy).expect("entropy calculation failed"),
+            entropy_error: f32::try_from(&entropy_error).expect("entropy calculation failed"),
+            policy_max_prob: f32::try_from(&probs.max_dim(1, false).0.mean(Kind::Float))
+                .expect("policy max probability calculation failed"),
+            target_q: f32::try_from(&target.mean(Kind::Float)).expect("target calculation failed"),
+            q1: f32::try_from(&q1.mean(Kind::Float)).expect("q1 calculation failed"),
+            q2: f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed"),
+            replay_truncation: f32::try_from(&truncated.mean(Kind::Float))
+                .expect("truncation calculation failed"),
+        })
+    } else {
+        None
     }
 }
 
 pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
+    if tch::Cuda::is_available() {
+        tch::Cuda::cudnn_set_benchmark(true);
+    }
+
     let sac_config = SacConfig::from_env();
     std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
     std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
@@ -259,7 +283,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         alpha_vs
             .root()
             .var("log_alpha", &[], nn::Init::Const(sac_config.log_alpha_init));
-    let target_entropy = sac_config.target_entropy_scale * (OUTPUT_SIZE as f64).ln();
+    let target_entropy = sac_config.target_entropy_scale * (ACTIONS as f64).ln();
     let mut alpha_opt = adam(&sac_config).build(&alpha_vs, sac_config.alpha_lr)?;
 
     let actor_vs = nn::VarStore::new(get_device());
@@ -282,6 +306,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut critic2_opt = adam(&sac_config).build(&critic2_vs, sac_config.learning_rate)?;
 
     let mut replay_buffer = ReplayBuffer::new(sac_config.buffer_size);
+    let mut sample_buffer = SampleBuffer::new(sac_config.batch_size as i64, INPUT_SIZE);
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1usize;
     let mut episodes_at_depth = 0usize;
@@ -290,6 +315,20 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut learner_updates = 0usize;
     let mut curriculum_active = config.learning_starts == 0;
     let mut update_metrics = UpdateMetricTotals::default();
+    let mut updates_since_metrics = 0usize;
+    const METRICS_EVERY: usize = 64;
+
+    // Profiling accumulators
+    let mut time_actions = Duration::ZERO;
+    let mut time_steps = Duration::ZERO;
+    let mut time_update = Duration::ZERO;
+    let mut time_target = Duration::ZERO;
+    let mut time_bookkeeping = Duration::ZERO;
+
+    let mut action_batches = 0usize;
+    let mut env_transitions = 0usize;
+    let mut updates_run = 0usize;
+    let mut target_updates_run = 0usize;
 
     let max_steps = config.max_steps(scramble_depth);
     let mut envs = (0..config.num_envs)
@@ -303,9 +342,10 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         get_device()
     );
     println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
+        "logs: {} | nets: {} | batch_size: {:4} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
         config.log_dir.display(),
         config.net_dir.display(),
+        sac_config.batch_size,
         target_entropy,
         sac_config.target_entropy_scale,
         sac_config.log_alpha_init,
@@ -331,10 +371,12 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut rng = rand::rng();
 
     while completed_episodes < config.episodes {
+        // --- Action selection ---
+        let t = Instant::now();
         let actions = if env_steps < config.learning_starts {
             Tensor::from_slice(
                 &(0..envs.len())
-                    .map(|_| rng.random_range(0..OUTPUT_SIZE) as i64)
+                    .map(|_| rng.random_range(0..ACTIONS) as i64)
                     .collect::<Vec<_>>(),
             )
         } else {
@@ -351,6 +393,8 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 .multinomial(1, true)
                 .squeeze_dim(1)
         };
+        time_actions += t.elapsed();
+        action_batches += 1;
 
         for env_idx in 0..envs.len() {
             if completed_episodes >= config.episodes {
@@ -359,10 +403,17 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
 
             let action = actions.int64_value(&[env_idx as i64]) as usize;
             let episode = &mut envs[env_idx];
+
+            // --- Env step ---
+            let t = Instant::now();
             let previous_state = episode.state.shallow_clone();
             let step = episode.env.step(action);
             let done = step.terminated || step.truncated;
+            time_steps += t.elapsed();
+            env_transitions += 1;
 
+            // --- Bookkeeping ---
+            let t = Instant::now();
             env_steps += 1;
             episode.reward += step.reward;
             episode.solved |= step.terminated;
@@ -380,15 +431,26 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 step.truncated,
             ));
             episode.state = step.next_state;
+            time_bookkeeping += t.elapsed();
 
+            // --- SAC update ---
             if env_steps > config.learning_starts
                 && replay_buffer.len() >= sac_config.batch_size
                 && env_steps.is_multiple_of(sac_config.update_every)
             {
-                update_metrics.add(sac_update(
+                let t = Instant::now();
+
+                updates_since_metrics += 1;
+                let extract = updates_since_metrics >= METRICS_EVERY;
+                if extract {
+                    updates_since_metrics = 0;
+                }
+
+                replay_buffer.sample_tensors(&mut sample_buffer);
+                if let Some(metrics) = sac_update(
                     &sac_config,
                     target_entropy,
-                    &replay_buffer,
+                    &sample_buffer,
                     &actor,
                     &critic1,
                     &critic2,
@@ -399,13 +461,23 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                     &mut critic2_opt,
                     &log_alpha,
                     &mut alpha_opt,
-                ));
+                    extract,
+                ) {
+                    update_metrics.add(metrics);
+                }
+
+                time_update += t.elapsed();
+                updates_run += 1;
+
                 learner_updates += 1;
             }
 
+            // --- Target update ---
             if env_steps > config.learning_starts
                 && env_steps.is_multiple_of(sac_config.target_network_frequency)
             {
+                let t = Instant::now();
+
                 update_target_networks(
                     &sac_config,
                     &critic1_vs,
@@ -413,6 +485,9 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                     &mut target_critic1_vs,
                     &mut target_critic2_vs,
                 );
+
+                time_target += t.elapsed();
+                target_updates_run += 1;
             }
 
             if !done {
@@ -494,6 +569,27 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 update_metrics = UpdateMetricTotals::default();
                 last_log_time = now;
                 last_log_env_steps = env_steps;
+
+                // Profiling
+                println!(
+                    "Profile | actions: {:.3}ms/batch | steps: {:.3}ms/step | bookkeeping: {:.3}ms/step | update: {:.3}ms/update | target: {:.3}ms/update",
+                    time_actions.as_secs_f64() * 1000.0 / action_batches.max(1) as f64,
+                    time_steps.as_secs_f64() * 1000.0 / env_transitions.max(1) as f64,
+                    time_bookkeeping.as_secs_f64() * 1000.0 / env_transitions.max(1) as f64,
+                    time_update.as_secs_f64() * 1000.0 / updates_run.max(1) as f64,
+                    time_target.as_secs_f64() * 1000.0 / target_updates_run.max(1) as f64,
+                );
+
+                time_actions = Duration::ZERO;
+                time_steps = Duration::ZERO;
+                time_update = Duration::ZERO;
+                time_target = Duration::ZERO;
+                time_bookkeeping = Duration::ZERO;
+
+                action_batches = 0;
+                env_transitions = 0;
+                updates_run = 0;
+                target_updates_run = 0;
             }
 
             if completed_episodes.is_multiple_of(config.save_every) {
