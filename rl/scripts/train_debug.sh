@@ -20,11 +20,11 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-resnet_clip_1.0-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-resnet_deep-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
-export RL_NUM_ENVS="${RL_NUM_ENVS:-64}"
+export RL_NUM_ENVS="${RL_NUM_ENVS:-512}"
 export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-10000}"
 
 # Evaluation
@@ -37,7 +37,7 @@ export RL_SAVE_EVERY="${RL_SAVE_EVERY:-1000}"
 
 # Replay buffer
 export RL_BUFFER_SIZE="${RL_BUFFER_SIZE:-200000}"
-export RL_BATCH_SIZE="${RL_BATCH_SIZE:-1024}"
+export RL_BATCH_SIZE="${RL_BATCH_SIZE:-4096}"
 
 # Optimizer
 export RL_LEARNING_RATE="${RL_LEARNING_RATE:-6e-4}"
@@ -53,7 +53,7 @@ export RL_TARGET_ENTROPY_SCALE="${RL_TARGET_ENTROPY_SCALE:-0.2}"
 export RL_LOG_ALPHA_INIT="${RL_LOG_ALPHA_INIT:--2.0}"
 
 # Update schedule
-export RL_UPDATE_EVERY="${RL_UPDATE_EVERY:-4}"
+export RL_UPDATE_EVERY="${RL_UPDATE_EVERY:-40}"
 export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-2000}"
 
 # Curriculum
