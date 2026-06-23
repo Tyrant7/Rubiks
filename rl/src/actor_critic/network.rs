@@ -96,7 +96,7 @@ pub struct DenseNetwork {
 
 impl Module for DenseNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut xs = self.input.forward(&xs).elu();
+        let mut xs = self.input.forward(xs).elu();
         for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
             xs = transition.forward(&block.forward(&xs)).elu();
         }

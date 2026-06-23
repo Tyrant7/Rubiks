@@ -160,7 +160,8 @@ fn sac_update(
     critic2_opt: &mut nn::Optimizer,
     log_alpha: &Tensor,
     alpha_opt: &mut nn::Optimizer,
-) -> UpdateMetrics {
+    update_metrics: bool,
+) -> Option<UpdateMetrics> {
     let batch = replay_buffer.sample_tensors(config.batch_size);
     let states = batch.states;
     let next_states = batch.next_states;
@@ -224,20 +225,24 @@ fn sac_update(
     alpha_loss.backward();
     alpha_opt.step();
 
-    UpdateMetrics {
-        actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
-        critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
-            + f32::try_from(&critic2_loss).expect("loss calculation failed"),
-        alpha_loss: f32::try_from(&alpha_loss).expect("loss calculation failed"),
-        entropy: f32::try_from(&entropy).expect("entropy calculation failed"),
-        entropy_error: f32::try_from(&entropy_error).expect("entropy calculation failed"),
-        policy_max_prob: f32::try_from(&probs.max_dim(1, false).0.mean(Kind::Float))
-            .expect("policy max probability calculation failed"),
-        target_q: f32::try_from(&target.mean(Kind::Float)).expect("target calculation failed"),
-        q1: f32::try_from(&q1.mean(Kind::Float)).expect("q1 calculation failed"),
-        q2: f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed"),
-        replay_truncation: f32::try_from(&truncated.mean(Kind::Float))
-            .expect("truncation calculation failed"),
+    if update_metrics {
+        Some(UpdateMetrics {
+            actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
+            critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
+                + f32::try_from(&critic2_loss).expect("loss calculation failed"),
+            alpha_loss: f32::try_from(&alpha_loss).expect("loss calculation failed"),
+            entropy: f32::try_from(&entropy).expect("entropy calculation failed"),
+            entropy_error: f32::try_from(&entropy_error).expect("entropy calculation failed"),
+            policy_max_prob: f32::try_from(&probs.max_dim(1, false).0.mean(Kind::Float))
+                .expect("policy max probability calculation failed"),
+            target_q: f32::try_from(&target.mean(Kind::Float)).expect("target calculation failed"),
+            q1: f32::try_from(&q1.mean(Kind::Float)).expect("q1 calculation failed"),
+            q2: f32::try_from(&q2.mean(Kind::Float)).expect("q2 calculation failed"),
+            replay_truncation: f32::try_from(&truncated.mean(Kind::Float))
+                .expect("truncation calculation failed"),
+        })
+    } else {
+        None
     }
 }
 
@@ -282,6 +287,8 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut learner_updates = 0usize;
     let mut curriculum_active = config.learning_starts == 0;
     let mut update_metrics = UpdateMetricTotals::default();
+    let mut updates_since_metrics = 0usize;
+    const METRICS_EVERY: usize = 10;
 
     // Profiling accumulators
     let mut time_actions = Duration::ZERO;
@@ -360,8 +367,6 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         time_actions += t.elapsed();
         action_batches += 1;
 
-        let mut to_update = 0;
-        let mut to_update_target = 0;
         for env_idx in 0..envs.len() {
             if completed_episodes >= config.episodes {
                 break;
@@ -399,17 +404,60 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             episode.state = step.next_state;
             time_bookkeeping += t.elapsed();
 
+            // --- SAC update ---
             if env_steps > config.learning_starts
                 && replay_buffer.len() >= sac_config.batch_size
                 && env_steps.is_multiple_of(sac_config.update_every)
             {
-                to_update += 1;
+                let t = Instant::now();
+
+                updates_since_metrics += 1;
+                let extract = updates_since_metrics >= METRICS_EVERY;
+                if extract {
+                    updates_since_metrics = 0;
+                }
+
+                if let Some(metrics) = sac_update(
+                    &sac_config,
+                    target_entropy,
+                    &replay_buffer,
+                    &actor,
+                    &critic1,
+                    &critic2,
+                    &target_critic1,
+                    &target_critic2,
+                    &mut actor_opt,
+                    &mut critic1_opt,
+                    &mut critic2_opt,
+                    &log_alpha,
+                    &mut alpha_opt,
+                    extract,
+                ) {
+                    update_metrics.add(metrics);
+                }
+
+                time_update += t.elapsed();
+                updates_run += 1;
+
+                learner_updates += 1;
             }
 
+            // --- Target update ---
             if env_steps > config.learning_starts
                 && env_steps.is_multiple_of(sac_config.target_network_frequency)
             {
-                to_update_target += 1;
+                let t = Instant::now();
+
+                update_target_networks(
+                    &sac_config,
+                    &critic1_vs,
+                    &critic2_vs,
+                    &mut target_critic1_vs,
+                    &mut target_critic2_vs,
+                );
+
+                time_target += t.elapsed();
+                target_updates_run += 1;
             }
 
             if !done {
@@ -542,51 +590,6 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             } else {
                 envs[env_idx].reset(scramble_depth, config.max_steps(scramble_depth));
             }
-        }
-
-        // --- SAC update ---
-        while to_update > 0 {
-            let t = Instant::now();
-
-            update_metrics.add(sac_update(
-                &sac_config,
-                target_entropy,
-                &replay_buffer,
-                &actor,
-                &critic1,
-                &critic2,
-                &target_critic1,
-                &target_critic2,
-                &mut actor_opt,
-                &mut critic1_opt,
-                &mut critic2_opt,
-                &log_alpha,
-                &mut alpha_opt,
-            ));
-
-            time_update += t.elapsed();
-            updates_run += 1;
-
-            to_update -= 1;
-            learner_updates += 1;
-        }
-
-        // --- Target update ---
-        while to_update_target > 0 {
-            let t = Instant::now();
-
-            update_target_networks(
-                &sac_config,
-                &critic1_vs,
-                &critic2_vs,
-                &mut target_critic1_vs,
-                &mut target_critic2_vs,
-            );
-
-            time_target += t.elapsed();
-            target_updates_run += 1;
-
-            to_update_target -= 1;
         }
     }
 
