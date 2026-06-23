@@ -162,6 +162,7 @@ fn sac_update(
     alpha_opt: &mut nn::Optimizer,
     update_metrics: bool,
 ) -> Option<UpdateMetrics> {
+    let t = Instant::now();
     let batch = replay_buffer.sample_tensors(config.batch_size);
     let states = batch.states;
     let next_states = batch.next_states;
@@ -169,42 +170,48 @@ fn sac_update(
     let rewards = batch.rewards;
     let terminated = batch.terminated;
     let truncated = batch.truncated;
+    let t_sample = t.elapsed();
 
+    let t = Instant::now();
     let target = tch::no_grad(|| {
         let next_logits = actor.forward(&next_states);
         let next_probs = next_logits.softmax(-1, Kind::Float);
         let next_log_probs = next_logits.log_softmax(-1, Kind::Float);
-
         let next_q1 = target_critic1.forward(&next_states);
         let next_q2 = target_critic2.forward(&next_states);
         let next_min_q = next_q1.minimum(&next_q2);
-
         let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
             .sum_dim_intlist(&[1i64][..], false, Kind::Float);
-
         &rewards + config.gamma * &next_v * (1. - &terminated)
     });
+    let t_target = t.elapsed();
 
+    let t = Instant::now();
     let q1 = critic1.forward(&states);
     let q2 = critic2.forward(&states);
     let q_min = q1.minimum(&q2);
 
+    // Optimization -> calculating both critic losses at once
     let q1 = q1.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
-    let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
-    critic1_opt.zero_grad();
-    critic1_loss.backward();
-    critic1_opt.step();
-
     let q2 = q2.gather(1, &actions.unsqueeze(1), false).squeeze_dim(1);
+    let critic1_loss = q1.mse_loss(&target, tch::Reduction::Mean);
     let critic2_loss = q2.mse_loss(&target, tch::Reduction::Mean);
+    let critic_loss = &critic1_loss + &critic2_loss;
+
+    critic1_opt.zero_grad();
     critic2_opt.zero_grad();
-    critic2_loss.backward();
+
+    critic_loss.backward();
+
+    critic1_opt.step();
     critic2_opt.step();
 
+    let t_critic = t.elapsed();
+
+    let t = Instant::now();
     let logits = actor.forward(&states);
     let probs = logits.softmax(-1, Kind::Float);
     let log_probs = logits.log_softmax(-1, Kind::Float);
-
     let alpha = log_alpha.exp();
     let actor_loss = (&probs * (&alpha * &log_probs - &q_min.detach()))
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
@@ -212,7 +219,9 @@ fn sac_update(
     actor_opt.zero_grad();
     actor_loss.backward();
     actor_opt.step();
+    let t_actor = t.elapsed();
 
+    let t = Instant::now();
     let entropy = -(&probs * &log_probs)
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
@@ -220,12 +229,21 @@ fn sac_update(
     let alpha_loss = (-log_alpha * (&log_probs + target_entropy).detach())
         .sum_dim_intlist(&[1i64][..], false, Kind::Float)
         .mean(Kind::Float);
-
     alpha_opt.zero_grad();
     alpha_loss.backward();
     alpha_opt.step();
+    let t_alpha = t.elapsed();
 
     if update_metrics {
+        println!(
+            "SAC breakdown | sample: {:.2}ms | target: {:.2}ms | critics: {:.2}ms | actor: {:.2}ms | alpha: {:.2}ms",
+            t_sample.as_secs_f64() * 1000.,
+            t_target.as_secs_f64() * 1000.,
+            t_critic.as_secs_f64() * 1000.,
+            t_actor.as_secs_f64() * 1000.,
+            t_alpha.as_secs_f64() * 1000.,
+        );
+
         Some(UpdateMetrics {
             actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
             critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
@@ -247,6 +265,10 @@ fn sac_update(
 }
 
 pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
+    if tch::Cuda::is_available() {
+        tch::Cuda::cudnn_set_benchmark(true);
+    }
+
     let sac_config = SacConfig::from_env();
     std::fs::create_dir_all(&config.net_dir).expect("failed to create net directory");
     std::fs::create_dir_all(&config.log_dir).expect("failed to create log directory");
@@ -288,7 +310,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut curriculum_active = config.learning_starts == 0;
     let mut update_metrics = UpdateMetricTotals::default();
     let mut updates_since_metrics = 0usize;
-    const METRICS_EVERY: usize = 10;
+    const METRICS_EVERY: usize = 64;
 
     // Profiling accumulators
     let mut time_actions = Duration::ZERO;
