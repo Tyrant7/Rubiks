@@ -14,7 +14,9 @@ use tch::{
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
-    ACTIONS, CUBE_SIZE, TrainingConfig, actor_critic::network::INPUT_SIZE, cube_env::SampleBuffer,
+    ACTIONS, CUBE_SIZE, TrainingConfig,
+    actor_critic::network::{INPUT_SIZE, ResNetwork},
+    cube_env::SampleBuffer,
     env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
 };
 use crate::{
@@ -22,7 +24,7 @@ use crate::{
     evaluate_model,
 };
 
-use crate::actor_critic::network::{DenseNetwork, initialize_network};
+use crate::actor_critic::network::initialize_network;
 use crate::actor_critic::sac_logging::{
     AlphaMetrics, CurriculumMetrics, EpisodeMetrics, PerformanceMetrics, UpdateMetricTotals,
     UpdateMetrics,
@@ -150,11 +152,11 @@ fn sac_update(
     config: &SacConfig,
     target_entropy: f64,
     samples: &SampleBuffer,
-    actor: &DenseNetwork,
-    critic1: &DenseNetwork,
-    critic2: &DenseNetwork,
-    target_critic1: &DenseNetwork,
-    target_critic2: &DenseNetwork,
+    actor: &ResNetwork,
+    critic1: &ResNetwork,
+    critic2: &ResNetwork,
+    target_critic1: &ResNetwork,
+    target_critic2: &ResNetwork,
     actor_opt: &mut nn::Optimizer,
     critic1_opt: &mut nn::Optimizer,
     critic2_opt: &mut nn::Optimizer,
@@ -202,6 +204,9 @@ fn sac_update(
 
     critic_loss.backward();
 
+    critic1_opt.clip_grad_norm(1.);
+    critic2_opt.clip_grad_norm(1.);
+
     critic1_opt.step();
     critic2_opt.step();
 
@@ -217,6 +222,7 @@ fn sac_update(
         .mean(Kind::Float);
     actor_opt.zero_grad();
     actor_loss.backward();
+    actor_opt.clip_grad_norm(1.);
     actor_opt.step();
     let t_actor = t.elapsed();
 

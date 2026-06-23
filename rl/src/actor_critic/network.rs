@@ -7,9 +7,7 @@ use tch::{
 pub const INPUT_SIZE: i64 = 6 * (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
 const HIDDEN: i64 = 512;
-const GROWTH: i64 = 256;
-const LAYERS_PER_BLOCK: usize = 2;
-const NUM_BLOCKS: usize = 3;
+const NUM_BLOCKS: usize = 6;
 
 fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
     nn::linear(
@@ -41,87 +39,64 @@ fn head_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
 }
 
 #[derive(Debug)]
-struct DenseLayer {
-    norm: nn::LayerNorm,
-    fc: nn::Linear,
+struct ResBlock {
+    fc1: nn::Linear,
+    fc2: nn::Linear,
+    norm1: nn::LayerNorm,
+    norm2: nn::LayerNorm,
 }
 
-impl DenseLayer {
-    fn new(vs: &nn::Path, in_dim: i64) -> Self {
+impl ResBlock {
+    fn new(vs: &nn::Path, dim: i64) -> Self {
         Self {
-            norm: nn::layer_norm(vs / "norm", vec![GROWTH], Default::default()),
-            fc: hidden_linear(vs / "fc", in_dim, GROWTH),
+            fc1: hidden_linear(vs / "fc1", dim, dim),
+            fc2: hidden_linear(vs / "fc2", dim, dim),
+            norm1: nn::layer_norm(vs / "norm1", vec![dim], Default::default()),
+            norm2: nn::layer_norm(vs / "norm2", vec![dim], Default::default()),
         }
     }
 
     fn forward(&self, xs: &Tensor) -> Tensor {
-        xs.apply(&self.fc).elu().apply(&self.norm)
+        // Pre-norm ResNet: norm → linear → elu → norm → linear → add residual
+        let residual = xs;
+        let out = xs
+            .apply(&self.norm1)
+            .apply(&self.fc1)
+            .elu()
+            .apply(&self.norm2)
+            .apply(&self.fc2);
+        out + residual
     }
 }
 
 #[derive(Debug)]
-struct DenseBlock {
-    layers: Vec<DenseLayer>,
-}
-
-impl DenseBlock {
-    fn new(vs: &nn::Path, in_dim: i64) -> Self {
-        let layers = (0..LAYERS_PER_BLOCK)
-            .map(|i| DenseLayer::new(&(vs / format!("layer{i}")), in_dim + i as i64 * GROWTH))
-            .collect();
-        Self { layers }
-    }
-
-    fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut outputs = vec![xs.shallow_clone()];
-        for layer in &self.layers {
-            let input = Tensor::cat(&outputs, 1);
-            outputs.push(layer.forward(&input));
-        }
-        Tensor::cat(&outputs, 1)
-    }
-
-    fn out_dim(in_dim: i64) -> i64 {
-        in_dim + LAYERS_PER_BLOCK as i64 * GROWTH
-    }
-}
-
-#[derive(Debug)]
-pub struct DenseNetwork {
+pub struct ResNetwork {
     input: nn::Linear,
-    blocks: Vec<DenseBlock>,
-    transitions: Vec<nn::Linear>,
+    blocks: Vec<ResBlock>,
+    norm: nn::LayerNorm,
     head: nn::Linear,
 }
 
-impl Module for DenseNetwork {
+impl Module for ResNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
         let mut xs = self.input.forward(xs).elu();
-        for (block, transition) in self.blocks.iter().zip(self.transitions.iter()) {
-            xs = transition.forward(&block.forward(&xs)).elu();
+        for block in &self.blocks {
+            xs = block.forward(&xs);
         }
-        self.head.forward(&xs)
+        self.head.forward(&xs.apply(&self.norm))
     }
 }
 
-pub fn initialize_network(vs: &nn::Path) -> DenseNetwork {
-    let block_out_dim = DenseBlock::out_dim(HIDDEN);
-
+pub fn initialize_network(vs: &nn::Path) -> ResNetwork {
     let mut blocks = Vec::with_capacity(NUM_BLOCKS);
-    let mut transitions = Vec::with_capacity(NUM_BLOCKS);
     for i in 0..NUM_BLOCKS {
-        blocks.push(DenseBlock::new(&(vs / format!("block{i}")), HIDDEN));
-        transitions.push(hidden_linear(
-            vs / format!("transition{i}"),
-            block_out_dim,
-            HIDDEN,
-        ));
+        blocks.push(ResBlock::new(&(vs / format!("block{i}")), HIDDEN));
     }
 
-    DenseNetwork {
+    ResNetwork {
         input: hidden_linear(vs / "input", INPUT_SIZE, HIDDEN),
         blocks,
-        transitions,
+        norm: nn::layer_norm(vs / "norm", vec![HIDDEN], Default::default()),
         head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE),
     }
 }
