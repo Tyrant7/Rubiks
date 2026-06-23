@@ -14,8 +14,8 @@ use tch::{
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
-    ACTIONS, CUBE_SIZE, TrainingConfig, env_parse, env_parse_bool, env_parse_clamped,
-    env_parse_min, get_device,
+    ACTIONS, CUBE_SIZE, TrainingConfig, actor_critic::network::INPUT_SIZE, cube_env::SampleBuffer,
+    env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
 };
 use crate::{
     cube_env::{CubeEnv, ReplayBuffer, Transition},
@@ -149,7 +149,7 @@ fn adam(config: &SacConfig) -> nn::Adam {
 fn sac_update(
     config: &SacConfig,
     target_entropy: f64,
-    replay_buffer: &ReplayBuffer,
+    samples: &SampleBuffer,
     actor: &DenseNetwork,
     critic1: &DenseNetwork,
     critic2: &DenseNetwork,
@@ -163,32 +163,31 @@ fn sac_update(
     update_metrics: bool,
 ) -> Option<UpdateMetrics> {
     let t = Instant::now();
-    let batch = replay_buffer.sample_tensors(config.batch_size);
-    let states = batch.states;
-    let next_states = batch.next_states;
-    let actions = batch.actions;
-    let rewards = batch.rewards;
-    let terminated = batch.terminated;
-    let truncated = batch.truncated;
+    let states = &samples.states;
+    let next_states = &samples.next_states;
+    let actions = &samples.actions;
+    let rewards = &samples.rewards;
+    let terminated = &samples.terminated;
+    let truncated = &samples.truncated;
     let t_sample = t.elapsed();
 
     let t = Instant::now();
     let target = tch::no_grad(|| {
-        let next_logits = actor.forward(&next_states);
+        let next_logits = actor.forward(next_states);
         let next_probs = next_logits.softmax(-1, Kind::Float);
         let next_log_probs = next_logits.log_softmax(-1, Kind::Float);
-        let next_q1 = target_critic1.forward(&next_states);
-        let next_q2 = target_critic2.forward(&next_states);
+        let next_q1 = target_critic1.forward(next_states);
+        let next_q2 = target_critic2.forward(next_states);
         let next_min_q = next_q1.minimum(&next_q2);
         let next_v = (&next_probs * (&next_min_q - log_alpha.exp() * &next_log_probs))
             .sum_dim_intlist(&[1i64][..], false, Kind::Float);
-        &rewards + config.gamma * &next_v * (1. - &terminated)
+        rewards + config.gamma * &next_v * (1. - terminated)
     });
     let t_target = t.elapsed();
 
     let t = Instant::now();
-    let q1 = critic1.forward(&states);
-    let q2 = critic2.forward(&states);
+    let q1 = critic1.forward(states);
+    let q2 = critic2.forward(states);
     let q_min = q1.minimum(&q2);
 
     // Optimization -> calculating both critic losses at once
@@ -209,7 +208,7 @@ fn sac_update(
     let t_critic = t.elapsed();
 
     let t = Instant::now();
-    let logits = actor.forward(&states);
+    let logits = actor.forward(states);
     let probs = logits.softmax(-1, Kind::Float);
     let log_probs = logits.log_softmax(-1, Kind::Float);
     let alpha = log_alpha.exp();
@@ -301,6 +300,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
     let mut critic2_opt = adam(&sac_config).build(&critic2_vs, sac_config.learning_rate)?;
 
     let mut replay_buffer = ReplayBuffer::new(sac_config.buffer_size);
+    let mut sample_buffer = SampleBuffer::new(sac_config.batch_size as i64, INPUT_SIZE);
     let mut last_100_solves = [false; 100];
     let mut scramble_depth = 1usize;
     let mut episodes_at_depth = 0usize;
@@ -439,10 +439,11 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                     updates_since_metrics = 0;
                 }
 
+                replay_buffer.sample_tensors(&mut sample_buffer);
                 if let Some(metrics) = sac_update(
                     &sac_config,
                     target_entropy,
-                    &replay_buffer,
+                    &sample_buffer,
                     &actor,
                     &critic1,
                     &critic2,

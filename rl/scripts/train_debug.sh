@@ -37,10 +37,10 @@ export RL_SAVE_EVERY="${RL_SAVE_EVERY:-1000}"
 
 # Replay buffer
 export RL_BUFFER_SIZE="${RL_BUFFER_SIZE:-200000}"
-export RL_BATCH_SIZE="${RL_BATCH_SIZE:-2048}"
+export RL_BATCH_SIZE="${RL_BATCH_SIZE:-1024}"
 
 # Optimizer
-export RL_LEARNING_RATE="${RL_LEARNING_RATE:-1e-3}"
+export RL_LEARNING_RATE="${RL_LEARNING_RATE:-6e-4}"
 export RL_ALPHA_LR="${RL_ALPHA_LR:-3e-4}"
 export RL_ADAM_EPS="${RL_ADAM_EPS:-1e-4}"
 

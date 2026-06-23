@@ -147,15 +147,6 @@ pub struct ReplayBuffer {
     transitions: Vec<Transition>,
 }
 
-pub struct SampleBatch {
-    pub states: Tensor,
-    pub actions: Tensor,
-    pub rewards: Tensor,
-    pub next_states: Tensor,
-    pub terminated: Tensor,
-    pub truncated: Tensor,
-}
-
 impl ReplayBuffer {
     pub fn new(capacity: usize) -> Self {
         ReplayBuffer {
@@ -182,43 +173,33 @@ impl ReplayBuffer {
             .collect()
     }
 
-    pub fn sample_tensors(&self, batch_size: usize) -> SampleBatch {
+    pub fn sample_tensors(&self, buffer: &mut SampleBuffer) {
+        let batch_size = buffer.states.size()[0] as usize;
         let batch = self.sample(batch_size);
 
-        SampleBatch {
-            states: Tensor::stack(
-                &batch
-                    .iter()
-                    .map(|t| t.state.shallow_clone())
-                    .collect::<Vec<_>>(),
-                0,
-            ),
-            actions: Tensor::from_slice(&batch.iter().map(|t| t.action as i64).collect::<Vec<_>>())
-                .to_device(get_device()),
-            rewards: Tensor::from_slice(&batch.iter().map(|t| t.reward).collect::<Vec<_>>())
-                .to_device(get_device()),
-            next_states: Tensor::stack(
-                &batch
-                    .iter()
-                    .map(|t| t.next_state.shallow_clone())
-                    .collect::<Vec<_>>(),
-                0,
-            ),
-            terminated: Tensor::from_slice(
-                &batch
-                    .iter()
-                    .map(|t| if t.terminated { 1f32 } else { 0f32 })
-                    .collect::<Vec<_>>(),
-            )
-            .to_device(get_device()),
-            truncated: Tensor::from_slice(
-                &batch
-                    .iter()
-                    .map(|t| if t.truncated { 1f32 } else { 0f32 })
-                    .collect::<Vec<_>>(),
-            )
-            .to_device(get_device()),
-        }
+        // Stack is one bulk GPU op -> much faster than per-element copy
+        let states: Vec<_> = batch.iter().map(|t| t.state.shallow_clone()).collect();
+        let next_states: Vec<_> = batch.iter().map(|t| t.next_state.shallow_clone()).collect();
+
+        buffer.states = Tensor::stack(&states, 0);
+        buffer.next_states = Tensor::stack(&next_states, 0);
+
+        // Scalar fields are cheap -> build on CPU then move
+        let actions: Vec<i64> = batch.iter().map(|t| t.action as i64).collect();
+        let rewards: Vec<f32> = batch.iter().map(|t| t.reward).collect();
+        let terminated: Vec<f32> = batch
+            .iter()
+            .map(|t| if t.terminated { 1.0 } else { 0.0 })
+            .collect();
+        let truncated: Vec<f32> = batch
+            .iter()
+            .map(|t| if t.truncated { 1.0 } else { 0.0 })
+            .collect();
+
+        buffer.actions = Tensor::from_slice(&actions).to_device(get_device());
+        buffer.rewards = Tensor::from_slice(&rewards).to_device(get_device());
+        buffer.terminated = Tensor::from_slice(&terminated).to_device(get_device());
+        buffer.truncated = Tensor::from_slice(&truncated).to_device(get_device());
     }
 
     pub fn len(&self) -> usize {
@@ -228,6 +209,29 @@ impl ReplayBuffer {
     pub fn clear(&mut self) {
         self.transitions.clear();
         self.insertions = 0;
+    }
+}
+
+pub struct SampleBuffer {
+    pub states: Tensor,
+    pub actions: Tensor,
+    pub rewards: Tensor,
+    pub next_states: Tensor,
+    pub terminated: Tensor,
+    pub truncated: Tensor,
+}
+
+impl SampleBuffer {
+    pub fn new(batch_size: i64, state_size: i64) -> Self {
+        let device = get_device();
+        Self {
+            states: Tensor::zeros([batch_size, state_size], (tch::Kind::Float, device)),
+            actions: Tensor::zeros([batch_size], (tch::Kind::Int64, device)),
+            rewards: Tensor::zeros([batch_size], (tch::Kind::Float, device)),
+            next_states: Tensor::zeros([batch_size, state_size], (tch::Kind::Float, device)),
+            terminated: Tensor::zeros([batch_size], (tch::Kind::Float, device)),
+            truncated: Tensor::zeros([batch_size], (tch::Kind::Float, device)),
+        }
     }
 }
 

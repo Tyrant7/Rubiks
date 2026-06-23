@@ -4,7 +4,7 @@ use tch::{
     nn::{self, Module},
 };
 
-const INPUT_SIZE: i64 = 6 * (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
+pub const INPUT_SIZE: i64 = 6 * (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
 const HIDDEN: i64 = 512;
 const GROWTH: i64 = 256;
