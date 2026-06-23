@@ -336,9 +336,10 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         get_device()
     );
     println!(
-        "logs: {} | nets: {} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
+        "logs: {} | nets: {} | batch_size: {:4} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
         config.log_dir.display(),
         config.net_dir.display(),
+        sac_config.batch_size,
         target_entropy,
         sac_config.target_entropy_scale,
         sac_config.log_alpha_init,
