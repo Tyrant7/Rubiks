@@ -20,7 +20,7 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-resnet_clip_1.0-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-resnet_baseline_no_halfturns-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
@@ -58,7 +58,7 @@ export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-2000}"
 
 # Curriculum
 export RL_CURRICULUM_THRESHOLD="${RL_CURRICULUM_THRESHOLD:-10}"
-export RL_MAX_SCRAMBLE="${RL_MAX_SCRAMBLE:-11}"
+export RL_MAX_SCRAMBLE="${RL_MAX_SCRAMBLE:-14}"
 export RL_CURRICULUM_MIN_EPISODES="${RL_CURRICULUM_MIN_EPISODES:-1}"
 export RL_CLEAR_REPLAY_ON_ADVANCE="${RL_CLEAR_REPLAY_ON_ADVANCE:-false}"
 

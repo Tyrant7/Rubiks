@@ -4,7 +4,7 @@ use rubiks::{Cube, FaceType, ScrambleType, Turn, TurnType};
 fn scramble_not_solved() {
     let mut cube = Cube::<3>::default();
     assert_eq!(cube.count_solved_faces(), 6);
-    cube.scramble(30, ScrambleType::Seeded(42));
+    cube.scramble(30, ScrambleType::Seeded(42), true);
     assert!(!cube.is_solved());
 }
 

@@ -87,7 +87,7 @@ impl CubeEnv {
     pub fn seeded_reset(&mut self, moves: usize, max_steps: usize, seed: u64) -> Tensor {
         self.cube = Cube::default();
         self.cube
-            .scramble(moves, rubiks::ScrambleType::Seeded(seed));
+            .scramble(moves, rubiks::ScrambleType::Seeded(seed), false);
         self.steps = 0;
         self.max_steps = max_steps;
         encode_cube(&self.cube)
@@ -96,7 +96,8 @@ impl CubeEnv {
     /// Scrambles this environment's cube and returns the associated state
     pub fn reset(&mut self, moves: usize, max_steps: usize) -> Tensor {
         self.cube = Cube::default();
-        self.cube.scramble(moves, rubiks::ScrambleType::Random);
+        self.cube
+            .scramble(moves, rubiks::ScrambleType::Random, false);
         self.steps = 0;
         self.max_steps = max_steps;
         encode_cube(&self.cube)
@@ -118,8 +119,8 @@ impl CubeEnv {
 
     /// Maps an action to a turn that can be applied to the cube
     fn map_action(action: usize) -> Turn<CUBE_SIZE> {
-        // Since action is in [0, 18), this will allow us to map it to 3 groups of 6
-        let ft = match action / 3 {
+        // Since action is in [0, 12), this will allow us to map it to 2 groups of 6
+        let ft = match action / 2 {
             0 => FaceType::Top,
             1 => FaceType::Bottom,
             2 => FaceType::Front,
@@ -127,10 +128,9 @@ impl CubeEnv {
             4 => FaceType::Left,
             _ => FaceType::Right,
         };
-        let tt = match action % 3 {
+        let tt = match action % 2 {
             0 => TurnType::Clockwise,
-            1 => TurnType::CounterClockwise,
-            _ => TurnType::Half,
+            _ => TurnType::CounterClockwise,
         };
         Turn::new(ft, tt)
     }

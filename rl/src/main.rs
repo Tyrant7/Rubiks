@@ -15,7 +15,7 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 use crate::{actor_critic::train_vectorized, cube_env::CubeEnv};
 
 const CUBE_SIZE: usize = 2;
-const ACTIONS: usize = 3 * 6;
+const ACTIONS: usize = 2 * 6;
 
 fn main() {
     let _ = train_vectorized(&TrainingConfig::from_env());

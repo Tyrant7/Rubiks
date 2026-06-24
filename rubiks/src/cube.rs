@@ -42,7 +42,7 @@ impl<const SIZE: usize> Default for Cube<SIZE> {
 impl<const SIZE: usize> Cube<SIZE> {
     /// Scrambles the cube by applying a number of random turns.
     /// Use [`ScrambleType::Seeded`] for a reproducible scramble.
-    pub fn scramble(&mut self, moves: usize, scramble_type: ScrambleType) {
+    pub fn scramble(&mut self, moves: usize, scramble_type: ScrambleType, allow_half_moves: bool) {
         let mut rng: Box<dyn rand::Rng> = match scramble_type {
             ScrambleType::Seeded(seed) => Box::new(StdRng::seed_from_u64(seed)),
             ScrambleType::Random => Box::new(rand::rng()),
@@ -55,11 +55,16 @@ impl<const SIZE: usize> Cube<SIZE> {
             FaceType::Left,
             FaceType::Right,
         ];
-        let turn_types = [
-            TurnType::Clockwise,
-            TurnType::CounterClockwise,
-            TurnType::Half,
-        ];
+        let turn_types = if allow_half_moves {
+            [
+                TurnType::Clockwise,
+                TurnType::CounterClockwise,
+                TurnType::Half,
+            ]
+            .to_vec()
+        } else {
+            [TurnType::Clockwise, TurnType::CounterClockwise].to_vec()
+        };
 
         // If we accidentally scrambled into a solved cube we'll scramble again
         while moves > 0 && self.is_solved() {
@@ -166,14 +171,14 @@ mod tests {
     #[test]
     fn scramble_not_solved() {
         let mut cube = Cube::<3>::default();
-        cube.scramble(30, ScrambleType::Seeded(42));
+        cube.scramble(30, ScrambleType::Seeded(42), true);
         assert!(!cube.is_solved());
     }
 
     #[test]
     fn scramble_not_solved_2x2() {
         let mut cube = Cube::<2>::default();
-        cube.scramble(30, ScrambleType::Seeded(42));
+        cube.scramble(30, ScrambleType::Seeded(42), true);
         assert!(!cube.is_solved());
     }
 
@@ -181,8 +186,8 @@ mod tests {
     fn scramble_seeded_deterministic() {
         let mut cube_a = Cube::<3>::default();
         let mut cube_b = Cube::default();
-        cube_a.scramble(30, ScrambleType::Seeded(20));
-        cube_b.scramble(30, ScrambleType::Seeded(20));
+        cube_a.scramble(30, ScrambleType::Seeded(20), true);
+        cube_b.scramble(30, ScrambleType::Seeded(20), true);
         assert_eq!(cube_a, cube_b);
     }
 
@@ -190,8 +195,8 @@ mod tests {
     fn scramble_different_seeds_differ() {
         let mut cube_a = Cube::<3>::default();
         let mut cube_b = Cube::default();
-        cube_a.scramble(30, ScrambleType::Seeded(50));
-        cube_b.scramble(30, ScrambleType::Seeded(51));
+        cube_a.scramble(30, ScrambleType::Seeded(50), true);
+        cube_b.scramble(30, ScrambleType::Seeded(51), true);
         assert_ne!(cube_a, cube_b);
     }
 
