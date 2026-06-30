@@ -23,32 +23,6 @@ fn encode_cube(cube: &Cube<CUBE_SIZE>) -> Tensor {
     Tensor::from_slice(&data).to_device(get_device())
 }
 
-fn count_correct_facelets(cube: &Cube<CUBE_SIZE>) -> usize {
-    let faces = [
-        FaceType::Top,
-        FaceType::Bottom,
-        FaceType::Front,
-        FaceType::Back,
-        FaceType::Left,
-        FaceType::Right,
-    ];
-
-    faces
-        .iter()
-        .map(|&ft| {
-            // Score dominant tile colour on each face
-            // May potentially have issue of scoring same colour multiple times across faces, but is unlikely
-            let face = cube.get_face(ft);
-            let mut colour_counts = [0; 6];
-            (0..CUBE_SIZE)
-                .flat_map(|r| (0..CUBE_SIZE).map(move |c| (r, c)))
-                .for_each(|(r, c)| colour_counts[face.get_tile_colour(r, c) as usize] += 1);
-
-            *colour_counts.iter().max().unwrap()
-        })
-        .sum()
-}
-
 /// Calculates reward for the current cube based on correctly placed
 /// facelet counts and whether or not the cube is solved.
 fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
