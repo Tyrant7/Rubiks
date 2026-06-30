@@ -6,6 +6,7 @@ use tch::{
 
 pub const INPUT_SIZE: i64 = 6 * (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
+const INITIAL_JUMP: i64 = 4096;
 const HIDDEN: i64 = 512;
 const NUM_BLOCKS: usize = 6;
 
@@ -59,9 +60,9 @@ struct ResBlock {
 }
 
 impl ResBlock {
-    fn new(vs: &nn::Path, dim: i64) -> Self {
+    fn new(vs: &nn::Path, in_dim: i64, dim: i64) -> Self {
         Self {
-            fc1: hidden_linear(vs / "fc1", dim, dim),
+            fc1: hidden_linear(vs / "fc1", in_dim, dim),
             fc2: scaled_linear(vs / "fc2", dim, dim, 1. / NUM_BLOCKS as f64),
             norm1: nn::layer_norm(vs / "norm1", vec![dim], Default::default()),
             norm2: nn::layer_norm(vs / "norm2", vec![dim], Default::default()),
@@ -73,7 +74,7 @@ impl ResBlock {
         let out = xs
             .apply(&self.norm1)
             .apply(&self.fc1)
-            .silu()
+            .elu()
             .apply(&self.norm2)
             .apply(&self.fc2);
         out + residual
@@ -89,7 +90,7 @@ pub struct ResNetwork {
 
 impl Module for ResNetwork {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut xs = self.input.forward(xs).silu();
+        let mut xs = self.input.forward(xs).elu();
         for block in &self.blocks {
             xs = block.forward(&xs);
         }
@@ -99,12 +100,13 @@ impl Module for ResNetwork {
 
 pub fn initialize_network(vs: &nn::Path) -> ResNetwork {
     let mut blocks = Vec::with_capacity(NUM_BLOCKS);
-    for i in 0..NUM_BLOCKS {
-        blocks.push(ResBlock::new(&(vs / format!("block{i}")), HIDDEN));
+    blocks.push(ResBlock::new(&(vs / "block0"), INITIAL_JUMP, HIDDEN));
+    for i in 0..NUM_BLOCKS - 1 {
+        blocks.push(ResBlock::new(&(vs / format!("block{i}")), HIDDEN, HIDDEN));
     }
 
     ResNetwork {
-        input: hidden_linear(vs / "input", INPUT_SIZE, HIDDEN),
+        input: hidden_linear(vs / "input", INPUT_SIZE, INITIAL_JUMP),
         blocks,
         head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE),
     }
