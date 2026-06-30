@@ -6,7 +6,6 @@ use tch::{
 
 pub const INPUT_SIZE: i64 = 6 * (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
-const INITIAL_JUMP: i64 = 4096;
 const HIDDEN: i64 = 512;
 const NUM_BLOCKS: usize = 6;
 
@@ -100,13 +99,12 @@ impl Module for ResNetwork {
 
 pub fn initialize_network(vs: &nn::Path) -> ResNetwork {
     let mut blocks = Vec::with_capacity(NUM_BLOCKS);
-    blocks.push(ResBlock::new(&(vs / "block0"), INITIAL_JUMP, HIDDEN));
-    for i in 0..NUM_BLOCKS - 1 {
+    for i in 0..NUM_BLOCKS {
         blocks.push(ResBlock::new(&(vs / format!("block{i}")), HIDDEN, HIDDEN));
     }
 
     ResNetwork {
-        input: hidden_linear(vs / "input", INPUT_SIZE, INITIAL_JUMP),
+        input: hidden_linear(vs / "input", INPUT_SIZE, HIDDEN),
         blocks,
         head: head_linear(vs / "head", HIDDEN, OUTPUT_SIZE),
     }

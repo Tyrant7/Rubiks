@@ -25,7 +25,6 @@ pub struct EpisodeMetrics {
     pub(crate) reward: f32,
     pub(crate) solved: bool,
     pub(crate) truncated: bool,
-    pub(crate) max_solved_faces: usize,
     pub(crate) recent_solve_rate: f32,
 }
 
@@ -35,7 +34,6 @@ impl Loggable for EpisodeMetrics {
             ("episode/reward", self.reward),
             ("episode/solve", self.solved as u8 as f32),
             ("episode/truncated", self.truncated as u8 as f32),
-            ("episode/max_solved_faces", self.max_solved_faces as f32),
             ("episode/recent_solve_rate", self.recent_solve_rate),
         ]
     }

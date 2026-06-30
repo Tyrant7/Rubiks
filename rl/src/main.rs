@@ -9,7 +9,7 @@ use std::{
 };
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use tch::{Device, nn::Module};
+use tch::{Device, Tensor, nn::Module};
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{actor_critic::train_vectorized, cube_env::CubeEnv};
@@ -19,6 +19,43 @@ const ACTIONS: usize = 3 * 6;
 
 fn main() {
     let _ = train_vectorized(&TrainingConfig::from_env());
+}
+
+struct EpisodeState {
+    env: CubeEnv,
+    state: Tensor,
+    reward: f32,
+    solved: bool,
+    truncated: bool,
+}
+
+impl EpisodeState {
+    fn new(scramble_depth: usize, max_steps: usize) -> Self {
+        let mut env = CubeEnv::new();
+        let state = env.reset(scramble_depth, max_steps);
+
+        Self {
+            env,
+            state,
+            reward: 0.,
+            solved: false,
+            truncated: false,
+        }
+    }
+
+    fn reset(&mut self, scramble_depth: usize, max_steps: usize) {
+        self.state = self.env.reset(scramble_depth, max_steps);
+        self.reward = 0.;
+        self.solved = false;
+        self.truncated = false;
+    }
+
+    fn seeded_reset(&mut self, scramble_depth: usize, max_steps: usize, seed: u64) {
+        self.state = self.env.seeded_reset(scramble_depth, max_steps, seed);
+        self.reward = 0.;
+        self.solved = false;
+        self.truncated = false;
+    }
 }
 
 pub struct TrainingConfig {
@@ -112,12 +149,13 @@ fn env_parse_bool(key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-pub fn get_device() -> Device {
+fn get_device() -> Device {
     Device::cuda_if_available()
 }
 
-pub fn evaluate_model(
+fn evaluate_model(
     model: &impl Module,
+    envs: &mut [EpisodeState],
     config: &TrainingConfig,
     writer: &mut SummaryWriter,
     episode: usize,
@@ -127,6 +165,7 @@ pub fn evaluate_model(
     for depth in [5, 8, 11] {
         let (solve_rate, avg_reward, avg_steps) = evaluate_greedy(
             model,
+            envs,
             &mut rng,
             depth,
             config.max_steps(depth),
@@ -153,6 +192,7 @@ pub fn evaluate_model(
 
 fn evaluate_greedy(
     model: &impl Module,
+    envs: &mut [EpisodeState],
     rng: &mut StdRng,
     scramble_depth: usize,
     max_steps: usize,
@@ -161,29 +201,35 @@ fn evaluate_greedy(
     let mut solves = 0usize;
     let mut total_reward = 0f32;
     let mut total_steps = 0usize;
-    let mut env = CubeEnv::new();
 
-    for _ in 0..episodes {
-        let mut state = env.seeded_reset(scramble_depth, max_steps, rng.next_u64());
+    for env in envs.iter_mut() {
+        env.seeded_reset(scramble_depth, max_steps, rng.next_u64());
+    }
 
-        for _ in 1..=max_steps {
-            let action = tch::no_grad(|| {
-                model
-                    .forward(&state.unsqueeze(0))
-                    .argmax(1, false)
-                    .int64_value(&[0]) as usize
-            });
-            let step = env.step(action);
+    let mut completed_episodes = 0;
+    while completed_episodes < episodes {
+        let states = Tensor::stack(&envs.iter().map(|e| &e.state).collect::<Vec<_>>(), 0);
+        let actions = tch::no_grad(|| model.forward(&states).argmax(1, false)); // .squeeze_dim(1)
+
+        for (env_idx, episode) in envs.iter_mut().enumerate() {
+            let action = actions.int64_value(&[env_idx as i64]) as usize;
+
+            let step = episode.env.step(action);
+            episode.state = step.next_state;
+
             total_reward += step.reward;
             total_steps += 1;
-            state = step.next_state;
-
             if step.terminated {
                 solves += 1;
-                break;
             }
-            if step.truncated {
-                break;
+
+            if step.terminated || step.truncated {
+                completed_episodes += 1;
+                if completed_episodes >= episodes {
+                    break;
+                }
+
+                episode.seeded_reset(scramble_depth, max_steps, rng.next_u64());
             }
         }
     }

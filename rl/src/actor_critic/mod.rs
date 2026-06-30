@@ -14,13 +14,13 @@ use tch::{
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 use crate::{
-    ACTIONS, CUBE_SIZE, TrainingConfig,
+    ACTIONS, CUBE_SIZE, EpisodeState, TrainingConfig,
     actor_critic::network::{INPUT_SIZE, ResNetwork},
     cube_env::SampleBuffer,
     env_parse, env_parse_bool, env_parse_clamped, env_parse_min, get_device,
 };
 use crate::{
-    cube_env::{CubeEnv, ReplayBuffer, Transition},
+    cube_env::{ReplayBuffer, Transition},
     evaluate_model,
 };
 
@@ -106,40 +106,6 @@ impl fmt::Display for LogSnapshot<'_> {
             self.update_metrics
                 .average(self.update_metrics.policy_max_prob),
         )
-    }
-}
-
-struct EpisodeState {
-    env: CubeEnv,
-    state: Tensor,
-    reward: f32,
-    solved: bool,
-    truncated: bool,
-    max_solved_faces: usize,
-}
-
-impl EpisodeState {
-    fn new(scramble_depth: usize, max_steps: usize) -> Self {
-        let mut env = CubeEnv::new();
-        let state = env.reset(scramble_depth, max_steps);
-        let max_solved_faces = env.get_cube().count_solved_faces();
-
-        Self {
-            env,
-            state,
-            reward: 0.,
-            solved: false,
-            truncated: false,
-            max_solved_faces,
-        }
-    }
-
-    fn reset(&mut self, scramble_depth: usize, max_steps: usize) {
-        self.state = self.env.reset(scramble_depth, max_steps);
-        self.reward = 0.;
-        self.solved = false;
-        self.truncated = false;
-        self.max_solved_faces = self.env.get_cube().count_solved_faces();
     }
 }
 
@@ -434,9 +400,6 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             episode.reward += step.reward;
             episode.solved |= step.terminated;
             episode.truncated |= step.truncated;
-            episode.max_solved_faces = episode
-                .max_solved_faces
-                .max(episode.env.get_cube().count_solved_faces());
 
             replay_buffer.push(Transition::new(
                 &previous_state,
@@ -517,7 +480,6 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                 reward: episode.reward,
                 solved: episode.solved,
                 truncated: episode.truncated,
-                max_solved_faces: episode.max_solved_faces,
                 recent_solve_rate: {
                     last_100_solves[episodes_at_depth % 100] = episode.solved;
                     episodes_at_depth += 1;
@@ -533,7 +495,7 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
             let recent_solves = (episode_metrics.recent_solve_rate * 100.) as usize;
 
             if config.eval_every > 0 && completed_episodes.is_multiple_of(config.eval_every) {
-                evaluate_model(&actor, config, &mut writer, completed_episodes);
+                evaluate_model(&actor, &mut envs, config, &mut writer, completed_episodes);
             }
 
             if update_metrics.steps > 0 && completed_episodes.is_multiple_of(config.log_every) {
