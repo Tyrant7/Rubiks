@@ -9,7 +9,7 @@ use std::{
 
 use tch::{
     Kind, TchError, Tensor,
-    nn::{self, Module, OptimizerConfig},
+    nn::{self, Module, OptimizerConfig, VarStore},
 };
 use tensorboard_rs::summary_writer::SummaryWriter;
 
@@ -160,6 +160,9 @@ fn sac_update(
     actor_opt: &mut nn::Optimizer,
     critic1_opt: &mut nn::Optimizer,
     critic2_opt: &mut nn::Optimizer,
+    actor_vs: &VarStore,
+    critic1_vs: &VarStore,
+    critic2_vs: &VarStore,
     log_alpha: &Tensor,
     alpha_opt: &mut nn::Optimizer,
     update_metrics: bool,
@@ -203,6 +206,8 @@ fn sac_update(
     critic2_opt.zero_grad();
 
     critic_loss.backward();
+    let critic1_grad_norm = grad_norm(critic1_vs);
+    let critic2_grad_norm = grad_norm(critic2_vs);
 
     critic1_opt.step();
     critic2_opt.step();
@@ -219,6 +224,7 @@ fn sac_update(
         .mean(Kind::Float);
     actor_opt.zero_grad();
     actor_loss.backward();
+    let actor_grad_norm = grad_norm(actor_vs);
     actor_opt.step();
     let t_actor = t.elapsed();
 
@@ -249,6 +255,9 @@ fn sac_update(
             actor_loss: f32::try_from(&actor_loss).expect("loss calculation failed"),
             critic_loss: f32::try_from(&critic1_loss).expect("loss calculation failed")
                 + f32::try_from(&critic2_loss).expect("loss calculation failed"),
+            critic1_grad_norm: critic1_grad_norm as f32,
+            critic2_grad_norm: critic2_grad_norm as f32,
+            actor_grad_norm: actor_grad_norm as f32,
             alpha_loss: f32::try_from(&alpha_loss).expect("loss calculation failed"),
             entropy: f32::try_from(&entropy).expect("entropy calculation failed"),
             entropy_error: f32::try_from(&entropy_error).expect("entropy calculation failed"),
@@ -462,6 +471,9 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
                     &mut actor_opt,
                     &mut critic1_opt,
                     &mut critic2_opt,
+                    &critic1_vs,
+                    &critic2_vs,
+                    &actor_vs,
                     &log_alpha,
                     &mut alpha_opt,
                     extract,
@@ -663,4 +675,20 @@ fn update_target_networks(
             tp.copy_(&updated);
         }
     });
+}
+
+fn grad_norm(vs: &nn::VarStore) -> f64 {
+    let total: f64 = vs
+        .trainable_variables()
+        .iter()
+        .filter_map(|p| {
+            let grad = p.grad();
+            if grad.defined() {
+                Some(grad.norm().double_value(&[]).powi(2))
+            } else {
+                None
+            }
+        })
+        .sum();
+    total.sqrt()
 }

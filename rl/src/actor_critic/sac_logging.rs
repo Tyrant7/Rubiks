@@ -84,6 +84,9 @@ impl Loggable for PerformanceMetrics {
 pub struct UpdateMetricTotals {
     pub(crate) actor_loss: f32,
     pub(crate) critic_loss: f32,
+    pub(crate) critic1_grad_norm: f32,
+    pub(crate) critic2_grad_norm: f32,
+    pub(crate) actor_grad_norm: f32,
     pub(crate) alpha_loss: f32,
     pub(crate) entropy: f32,
     pub(crate) entropy_error: f32,
@@ -98,6 +101,9 @@ pub struct UpdateMetricTotals {
 pub struct UpdateMetrics {
     pub(crate) actor_loss: f32,
     pub(crate) critic_loss: f32,
+    pub(crate) critic1_grad_norm: f32,
+    pub(crate) critic2_grad_norm: f32,
+    pub(crate) actor_grad_norm: f32,
     pub(crate) alpha_loss: f32,
     pub(crate) entropy: f32,
     pub(crate) entropy_error: f32,
@@ -112,6 +118,9 @@ impl UpdateMetricTotals {
     pub fn add(&mut self, metrics: UpdateMetrics) {
         self.actor_loss += metrics.actor_loss;
         self.critic_loss += metrics.critic_loss;
+        self.critic1_grad_norm += metrics.critic1_grad_norm;
+        self.critic2_grad_norm += metrics.critic2_grad_norm;
+        self.actor_grad_norm += metrics.actor_grad_norm;
         self.alpha_loss += metrics.alpha_loss;
         self.entropy += metrics.entropy;
         self.entropy_error += metrics.entropy_error;
@@ -134,6 +143,9 @@ impl Loggable for UpdateMetricTotals {
             ("loss/critic_avg", self.average(self.critic_loss) / 2.),
             ("loss/actor", self.average(self.actor_loss)),
             ("loss/alpha", self.average(self.alpha_loss)),
+            ("grads/critic1", self.average(self.critic1_grad_norm)),
+            ("grads/critic2", self.average(self.critic2_grad_norm)),
+            ("grads/actor", self.average(self.actor_grad_norm)),
             ("entropy/policy", self.average(self.entropy)),
             (
                 "entropy/error_policy_minus_target",
