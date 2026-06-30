@@ -24,8 +24,8 @@ export RL_RUN_NAME="${RL_RUN_NAME:-resnet_sparse_rewards-$(date +%Y%m%d-%H%M%S)}
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
-export RL_NUM_ENVS="${RL_NUM_ENVS:-256}"
-export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-20000}"
+export RL_NUM_ENVS="${RL_NUM_ENVS:-64}"
+export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-10000}"
 
 # Evaluation
 export RL_EVAL_EVERY="${RL_EVAL_EVERY:-1000}"
@@ -42,7 +42,7 @@ export RL_BATCH_SIZE="${RL_BATCH_SIZE:-512}"
 # Optimizer
 export RL_LEARNING_RATE="${RL_LEARNING_RATE:-3e-4}"
 export RL_ALPHA_LR="${RL_ALPHA_LR:-3e-4}"
-export RL_ADAM_EPS="${RL_ADAM_EPS:-1e-5}"
+export RL_ADAM_EPS="${RL_ADAM_EPS:-1e-4}"
 
 # TD learning
 export RL_GAMMA="${RL_GAMMA:-0.99}"
@@ -53,7 +53,7 @@ export RL_TARGET_ENTROPY_SCALE="${RL_TARGET_ENTROPY_SCALE:-0.2}"
 export RL_LOG_ALPHA_INIT="${RL_LOG_ALPHA_INIT:--2.0}"
 
 # Update schedule
-export RL_UPDATE_EVERY="${RL_UPDATE_EVERY:-6}"
+export RL_UPDATE_EVERY="${RL_UPDATE_EVERY:-4}"
 export RL_TARGET_NETWORK_FREQUENCY="${RL_TARGET_NETWORK_FREQUENCY:-2000}"
 
 # Curriculum

@@ -11,6 +11,7 @@ impl Loggable for SacConfig {
             ("sac/curriculum_min_episodes",     self.curriculum_min_episodes as f32),
             ("sac/clear_replay_on_advance",     self.clear_replay_on_advance as u8 as f32),
             ("sac/adam_eps",                    self.adam_eps as f32),
+            ("sac/lr",                          self.learning_rate as f32),
             ("sac/target_entropy_scale",        self.target_entropy_scale as f32),
             ("sac/log_alpha_init",              self.log_alpha_init as f32),
             ("sac/target_network_frequency",    self.target_network_frequency as f32),
