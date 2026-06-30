@@ -64,7 +64,7 @@ impl ResBlock {
         Self {
             fc1: hidden_linear(vs / "fc1", in_dim, dim),
             fc2: scaled_linear(vs / "fc2", dim, dim, 1. / NUM_BLOCKS as f64),
-            norm1: nn::layer_norm(vs / "norm1", vec![dim], Default::default()),
+            norm1: nn::layer_norm(vs / "norm1", vec![in_dim], Default::default()),
             norm2: nn::layer_norm(vs / "norm2", vec![dim], Default::default()),
         }
     }
