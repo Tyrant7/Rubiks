@@ -20,12 +20,16 @@ else
 fi
 
 # Run identity
-export RL_RUN_NAME="${RL_RUN_NAME:-resnet_sparse_rewards-$(date +%Y%m%d-%H%M%S)}"
+export RL_RUN_NAME="${RL_RUN_NAME:-resnet_deep_sparse_rewards-$(date +%Y%m%d-%H%M%S)}"
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
 export RL_NUM_ENVS="${RL_NUM_ENVS:-256}"
+<<<<<<< HEAD
 export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-20000}"
+=======
+export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-10000}"
+>>>>>>> main
 
 # Evaluation
 export RL_EVAL_EVERY="${RL_EVAL_EVERY:-1000}"
