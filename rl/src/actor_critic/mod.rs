@@ -206,6 +206,9 @@ fn sac_update(
     critic2_opt.zero_grad();
 
     critic_loss.backward();
+    critic1_opt.clip_grad_norm(5.);
+    critic2_opt.clip_grad_norm(5.);
+
     let critic1_grad_norm = grad_norm(critic1_vs);
     let critic2_grad_norm = grad_norm(critic2_vs);
 
@@ -224,6 +227,7 @@ fn sac_update(
         .mean(Kind::Float);
     actor_opt.zero_grad();
     actor_loss.backward();
+    actor_opt.clip_grad_norm(5.);
     let actor_grad_norm = grad_norm(actor_vs);
     actor_opt.step();
     let t_actor = t.elapsed();

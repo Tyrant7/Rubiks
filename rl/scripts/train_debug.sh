@@ -24,7 +24,7 @@ export RL_RUN_NAME="${RL_RUN_NAME:-resnet_deep_sparse_rewards-$(date +%Y%m%d-%H%
 
 # Episode structure
 export RL_EPISODES="${RL_EPISODES:-20000}"
-export RL_NUM_ENVS="${RL_NUM_ENVS:-512}"
+export RL_NUM_ENVS="${RL_NUM_ENVS:-256}"
 export RL_LEARNING_STARTS="${RL_LEARNING_STARTS:-10000}"
 
 # Evaluation
@@ -36,11 +36,11 @@ export RL_LOG_EVERY="${RL_LOG_EVERY:-25}"
 export RL_SAVE_EVERY="${RL_SAVE_EVERY:-1000}"
 
 # Replay buffer
-export RL_BUFFER_SIZE="${RL_BUFFER_SIZE:-200000}"
-export RL_BATCH_SIZE="${RL_BATCH_SIZE:-4096}"
+export RL_BUFFER_SIZE="${RL_BUFFER_SIZE:-500000}"
+export RL_BATCH_SIZE="${RL_BATCH_SIZE:-256}"
 
 # Optimizer
-export RL_LEARNING_RATE="${RL_LEARNING_RATE:-6e-4}"
+export RL_LEARNING_RATE="${RL_LEARNING_RATE:-3e-4}"
 export RL_ALPHA_LR="${RL_ALPHA_LR:-3e-4}"
 export RL_ADAM_EPS="${RL_ADAM_EPS:-1e-4}"
 

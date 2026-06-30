@@ -26,14 +26,14 @@ fn hidden_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(vs, in_dim, out_dim, nn::init::DEFAULT_KAIMING_NORMAL)
 }
 
-fn scaled_linear(vs: nn::Path, in_dim: i64, out_dim: i64, scale: f64) -> nn::Linear {
+fn res_linear(vs: nn::Path, in_dim: i64, out_dim: i64) -> nn::Linear {
     linear(
         vs,
         in_dim,
         out_dim,
         nn::Init::Randn {
-            mean: 0.0,
-            stdev: scale,
+            mean: 0.,
+            stdev: 1e-3,
         },
     )
 }
@@ -62,7 +62,7 @@ impl ResBlock {
     fn new(vs: &nn::Path, dim: i64) -> Self {
         Self {
             fc1: hidden_linear(vs / "fc1", dim, dim),
-            fc2: scaled_linear(vs / "fc2", dim, dim, 1. / (NUM_BLOCKS as f64).sqrt()),
+            fc2: res_linear(vs / "fc2", dim, dim),
             norm1: nn::layer_norm(vs / "norm1", vec![dim], Default::default()),
             norm2: nn::layer_norm(vs / "norm2", vec![dim], Default::default()),
         }
@@ -76,7 +76,8 @@ impl ResBlock {
             .silu()
             .apply(&self.norm2)
             .apply(&self.fc2);
-        out + residual
+        // residual + (out / NUM_BLOCKS as f64).sqrt()
+        residual + out
     }
 }
 
