@@ -1,9 +1,9 @@
 # TODO
 
 ## RL
-- Train from checkpoints
-- Try out more algorithms for solving
-- Try out more network architectures
+- Explore self-supervised solutions
+- Explore GNN architecture
 
 ## Organization
 - README file
+- Training from checkpoints
