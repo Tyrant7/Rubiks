@@ -52,12 +52,7 @@ fn count_correct_facelets(cube: &Cube<CUBE_SIZE>) -> usize {
 /// Calculates reward for the current cube based on correctly placed
 /// facelet counts and whether or not the cube is solved.
 fn calculate_reward(cube: &Cube<CUBE_SIZE>) -> f32 {
-    if cube.is_solved() {
-        return 1.0;
-    }
-
-    const FACELETS: usize = CUBE_SIZE * CUBE_SIZE * 6;
-    (count_correct_facelets(cube) as f32 / FACELETS as f32) * 0.1 - 0.1
+    if cube.is_solved() { 1.0 } else { -0.01 }
 }
 
 pub struct CubeEnv {
