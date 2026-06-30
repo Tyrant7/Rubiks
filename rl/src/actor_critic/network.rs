@@ -6,8 +6,8 @@ use tch::{
 
 pub const INPUT_SIZE: i64 = 6 * (CUBE_SIZE * CUBE_SIZE) as i64 * 6;
 const OUTPUT_SIZE: i64 = ACTIONS as i64;
-const HIDDEN: i64 = 256;
-const NUM_BLOCKS: usize = 24;
+const HIDDEN: i64 = 512;
+const NUM_BLOCKS: usize = 6;
 
 fn linear(vs: nn::Path, in_dim: i64, out_dim: i64, ws_init: nn::Init) -> nn::Linear {
     nn::linear(

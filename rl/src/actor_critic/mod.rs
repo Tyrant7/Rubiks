@@ -332,10 +332,17 @@ pub fn train_vectorized(config: &TrainingConfig) -> Result<(), TchError> {
         .collect::<Vec<_>>();
 
     println!(
-        "Beginning training run {} for cube of size: {} on device: {:?}",
+        "Beginning training run {} for cube of size {}x{}x{} on device {:?} for actor with {} params",
         config.run_name,
         CUBE_SIZE,
-        get_device()
+        CUBE_SIZE,
+        CUBE_SIZE,
+        get_device(),
+        actor_vs
+            .trainable_variables()
+            .iter()
+            .map(|t| t.numel())
+            .sum::<usize>()
     );
     println!(
         "logs: {} | nets: {} | batch_size: {:4} | target entropy: {:.4} | target entropy scale: {:.3} | log alpha init: {:.3} | alpha lr: {:.1e} | adam eps: {:.1e} | tau: {:.4} | update every: {} | target sync: {} | learning starts: {} | envs: {} | curriculum threshold: {}%/{}eps | clear replay: {} | eval: {}x{}",
