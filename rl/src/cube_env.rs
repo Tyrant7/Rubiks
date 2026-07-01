@@ -103,11 +103,6 @@ impl CubeEnv {
         };
         Turn::new(ft, tt)
     }
-
-    /// Cube getter
-    pub fn get_cube(&self) -> &Cube<CUBE_SIZE> {
-        &self.cube
-    }
 }
 
 pub struct ReplayBuffer {
